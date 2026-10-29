@@ -7,6 +7,15 @@
 .codex/
 *.pem
 *.key
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db-wal
+*.db-shm
 
 # Dependencies and generated files; refine after choosing the stack
 node_modules/
