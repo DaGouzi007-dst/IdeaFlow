@@ -21,6 +21,10 @@ target/
 coverage/
 *.log
 
+*.db
+*.db-journal
+*.sqlite3
+
 # Operating system files
 .DS_Store
 Thumbs.db
