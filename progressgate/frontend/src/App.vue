@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
+import BrandMark from './components/BrandMark.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -252,13 +253,13 @@ onMounted(load)
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="M8 22.5V9.5h6.2c5.1 0 8.2 2.2 8.2 6.5s-3.1 6.5-8.2 6.5H8Z" stroke="currentColor" stroke-width="2.3"/><path d="M13 9.5v13M22 9.5h2" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/></svg></span>
+        <span class="brand-mark"><BrandMark /></span>
         <span><strong>IdeaFlow</strong><small>想法与进展</small></span>
       </div>
 
       <div class="sidebar-section-label">工作空间</div>
       <div class="project-chip">
-        <span class="project-avatar">I</span>
+        <span class="project-avatar"><BrandMark /></span>
         <span class="project-copy"><strong>{{ project?.name || '示例项目' }}</strong><small>本地项目</small></span>
         <span class="project-chevron" aria-hidden="true">⌄</span>
       </div>

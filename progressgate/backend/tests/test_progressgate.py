@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from uuid import UUID, uuid4
 
 import pytest
@@ -113,3 +114,59 @@ def test_rejects_unknown_and_cross_project_references(client, monkeypatch):
     assert client.get(f"/api/tasks/{uuid4()}").status_code == 404
     assert client.post(f"/api/projects/{PROJECT}/tasks", json={"title": "   "}).status_code == 422
     assert client.post(f"/api/projects/{PROJECT}/tasks", json={"title": "任务", "due_date": "not-a-date"}).status_code == 422
+
+
+def test_records_survive_database_reopen(tmp_path, monkeypatch):
+    database_url = f"sqlite:///{tmp_path / 'progressgate.db'}"
+
+    @contextmanager
+    def reopened_client():
+        engine = create_engine(database_url, connect_args={"check_same_thread": False})
+
+        def persisted_session():
+            with Session(engine) as session:
+                yield session
+
+        with monkeypatch.context() as changes:
+            changes.setattr(
+                "app.main.create_tables", lambda: SQLModel.metadata.create_all(engine)
+            )
+            app.dependency_overrides[get_session] = persisted_session
+            try:
+                with TestClient(app) as test_client:
+                    yield test_client
+            finally:
+                app.dependency_overrides.clear()
+                engine.dispose()
+
+    with reopened_client() as client:
+        decision = client.put(
+            f"/api/ideas/{IDEA}/decision",
+            json={"status": "adopted", "reason": "保留来源，方便回顾"},
+        )
+        assert decision.status_code == 200
+        created = client.post(
+            f"/api/projects/{PROJECT}/tasks",
+            json={"title": "验证记录持久化", "idea_id": IDEA},
+        )
+        assert created.status_code == 201
+        task_id = created.json()["task_id"]
+        updated = client.patch(
+            f"/api/tasks/{task_id}",
+            json={"status": "blocked", "block_reason": "等待联调"},
+        )
+        assert updated.status_code == 200
+
+    # A new engine and HTTP client must read the same file without reseeding records.
+    with reopened_client() as client:
+        decision = client.get(f"/api/ideas/{IDEA}/decision").json()
+        assert decision["status"] == "adopted"
+        assert decision["reason"] == "保留来源，方便回顾"
+        tasks = client.get(f"/api/projects/{PROJECT}/tasks").json()
+        assert [task["task_id"] for task in tasks] == [task_id]
+        task = client.get(f"/api/tasks/{task_id}").json()
+        assert task["status"] == "blocked" and task["block_reason"] == "等待联调"
+        assert task["idea_id"] == IDEA
+        events = client.get(f"/api/tasks/{task_id}/events").json()
+        assert len(events) == 2
+        assert events[1]["changes"]["status"] == {"from": "todo", "to": "blocked"}

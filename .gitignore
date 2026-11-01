@@ -30,6 +30,11 @@ target/
 coverage/
 *.log
 
+# Local exploration and submission artifacts; retain selected source under progressgate/
+/outputs/
+/delivery/
+*.save
+
 # Operating system files
 .DS_Store
 Thumbs.db
