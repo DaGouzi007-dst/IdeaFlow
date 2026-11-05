@@ -43,7 +43,7 @@ async function load() {
   }
 }
 
-// 输入停下来再搜，不要每敲一个字就发一次请求
+
 let timer = null
 function search() {
   clearTimeout(timer)

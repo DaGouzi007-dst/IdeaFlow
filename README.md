@@ -26,7 +26,7 @@
 
 ## 当前阶段
 
-项目选题已通过，正在进行需求分析和开发准备。本仓库目前用于保存项目说明与课程文档，尚未提供可运行的软件。
+项目选题已通过，正在进行需求分析和开发准备。模块 3（想法提取与整理）已有第一版代码：后端一个文件、四个接口，前端一个列表页，启动后端时自动灌 5 条模拟想法；其余模块仍在设计阶段，尚未并入同一套代码。
 
 ## 项目资料
 
@@ -46,4 +46,23 @@
 
 ## 技术方案与运行方式
 
-前端、后端、数据库及部署方式待小组讨论确定。代码框架建立后补充安装、配置和运行说明。
+- 前端：Vue 3 + JavaScript + Vite + Vue Router（Node 24）
+- 后端：Python 3.12 + FastAPI + Uvicorn
+- 数据库：SQLite + SQLModel
+
+需要本机有 Python 3.12+ 和 Node 24+。在仓库根目录执行：
+
+```powershell
+.\scripts\setup.ps1        # 建虚拟环境、装后端依赖
+.\scripts\dev-backend.ps1  # 后端 http://127.0.0.1:8000/docs
+```
+
+前端另开一个终端：
+
+```powershell
+cd frontend
+npm install
+npm run dev                # http://127.0.0.1:5173
+```
+
+模块 3 的表结构见 [docs/ideaflow/想法卡片字段设计.md](docs/ideaflow/想法卡片字段设计.md)。
