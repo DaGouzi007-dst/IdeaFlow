@@ -40,6 +40,7 @@ ProgressGate 已有决策、任务、阻塞与历史记录的本地演示，项�
 - [组会纪要模板](docs/templates/组会纪要模板.md)
 - [ProgressGate 运行与接口说明](progressgate/README.md)
 - [第四模块第一周进展](docs/weekly/第1周-唐逸飞-决策与任务跟踪.md)
+- [第四模块第二周进展](docs/weekly/第2周-唐逸飞-决策与任务跟踪.md)
 - [第四模块需求分析](docs/requirements/决策与任务跟踪-需求分析.md)
 - [第四模块第一阶段验证](docs/testing/ProgressGate-第一阶段验证记录.md)
 - [界面原型（示例数据）](progressgate/design-preview/README.md)

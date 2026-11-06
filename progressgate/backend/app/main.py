@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 
 from . import demo
 from .db import create_tables, get_session
-from .models import Decision, DecisionInput, Task, TaskEvent, TaskInput, TaskUpdate, utc_now
+from .models import Decision, DecisionEvent, DecisionInput, Task, TaskEvent, TaskInput, TaskUpdate, utc_now
 
 
 @asynccontextmanager
@@ -59,15 +59,37 @@ def get_decision(idea_id: UUID, session: SessionDep):
 def put_decision(idea_id: UUID, data: DecisionInput, session: SessionDep):
     idea = demo.require_idea(str(idea_id))
     decision = session.exec(select(Decision).where(Decision.idea_id == idea["idea_id"])).first()
+    reason = data.reason or None
     if decision is None:
-        decision = Decision(project_id=idea["project_id"], idea_id=idea["idea_id"], status=data.status)
+        decision = Decision(project_id=idea["project_id"], idea_id=idea["idea_id"], status=data.status, reason=reason)
+        changes = {"status": {"from": None, "to": data.status}, "reason": {"from": None, "to": reason}}
+        event_type = "created"
+    else:
+        changes = {key: {"from": getattr(decision, key), "to": value}
+                   for key, value in {"status": data.status, "reason": reason}.items()
+                   if getattr(decision, key) != value}
+        event_type = "updated"
+    if not changes:
+        return decision
     decision.status = data.status
-    decision.reason = data.reason or None
+    decision.reason = reason
     decision.updated_at = utc_now()
     session.add(decision)
+    session.add(DecisionEvent(decision_id=decision.decision_id, idea_id=decision.idea_id,
+                              event_type=event_type, changes_json=json.dumps(changes, ensure_ascii=False)))
     session.commit()
     session.refresh(decision)
     return decision
+
+
+@app.get("/api/ideas/{idea_id}/decision/events")
+def decision_events(idea_id: UUID, session: SessionDep):
+    idea = demo.require_idea(str(idea_id))
+    events = session.exec(select(DecisionEvent).where(DecisionEvent.idea_id == idea["idea_id"])
+                          .order_by(DecisionEvent.created_at.asc(), DecisionEvent.event_id.asc())).all()
+    return [{"event_id": event.event_id, "decision_id": event.decision_id, "idea_id": event.idea_id,
+             "event_type": event.event_type, "changes": event.changes(), "created_at": event.created_at}
+            for event in events]
 
 
 @app.get("/api/projects/{project_id}/tasks")

@@ -33,6 +33,18 @@ class Decision(SQLModel, table=True):
     updated_at: str = Field(default_factory=utc_now)
 
 
+class DecisionEvent(SQLModel, table=True):
+    event_id: str = Field(default_factory=new_id, primary_key=True)
+    decision_id: str = Field(foreign_key="decision.decision_id", index=True)
+    idea_id: str = Field(index=True)
+    event_type: str
+    changes_json: str = Field(sa_column=Column(Text, nullable=False))
+    created_at: str = Field(default_factory=utc_now)
+
+    def changes(self) -> dict:
+        return json.loads(self.changes_json)
+
+
 class Task(SQLModel, table=True):
     task_id: str = Field(default_factory=new_id, primary_key=True)
     project_id: str = Field(index=True)

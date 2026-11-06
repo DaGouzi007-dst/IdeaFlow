@@ -10,6 +10,7 @@ const ideas = ref([])
 const decisions = ref({})
 const tasks = ref([])
 const events = ref([])
+const decisionEvents = ref([])
 const selectedId = ref(null)
 const activeFilter = ref('all')
 const search = ref('')
@@ -131,6 +132,17 @@ async function loadIdeaSources(ideaId) {
   }
 }
 
+async function loadDecisionEvents(ideaId) {
+  decisionEvents.value = []
+  if (!ideaId) return
+  try {
+    const result = await api(`/api/ideas/${ideaId}/decision/events`)
+    if (selectedIdeaId.value === ideaId) decisionEvents.value = result
+  } catch (err) {
+    if (selectedIdeaId.value === ideaId) error.value = err.message
+  }
+}
+
 async function reconcileSelection() {
   if (visibleTasks.value.some(task => task.task_id === selectedId.value)) return
   selectedId.value = visibleTasks.value[0]?.task_id || null
@@ -193,14 +205,16 @@ async function saveTask() {
 
 async function saveDecision() {
   if (!selectedIdea.value) return
+  const ideaId = selectedIdea.value.idea_id
   saving.value = true
   error.value = ''
   notice.value = ''
   try {
-    await api(`/api/ideas/${selectedIdea.value.idea_id}/decision`, {
+    await api(`/api/ideas/${ideaId}/decision`, {
       method: 'PUT', body: JSON.stringify(decisionForm),
     })
     await refreshDecisions()
+    if (selectedIdeaId.value === ideaId) await loadDecisionEvents(ideaId)
     notice.value = '方案决策已保存。'
   } catch (err) { error.value = err.message }
   finally { saving.value = false }
@@ -230,6 +244,7 @@ function changeValue(field, value) {
 
 watch([activeFilter, search], reconcileSelection)
 watch(selectedIdeaId, loadIdeaSources)
+watch(selectedIdeaId, loadDecisionEvents)
 watch(() => [route.name, route.query.idea, route.query.task], () => {
   error.value = ''
   notice.value = ''
@@ -358,6 +373,7 @@ onMounted(load)
                 <div class="idea-summary"><span class="idea-summary-label">当前想法</span><strong>{{ selectedIdea.title }}</strong><p>{{ selectedIdea.content }}</p><small>{{ sources.length ? '已关联模拟来源消息' : '暂无来源消息' }}</small></div>
                 <details v-if="sources.length" class="source-details"><summary>查看来源与上下文</summary><div v-for="source in sources" :key="source.message_id" class="source-context"><strong>{{ source.conversation_title }}</strong><div v-for="message in source.context" :key="message.message_id" class="source-message" :class="{ highlighted: message.message_id === source.message_id }"><small>{{ message.role === 'user' ? '用户' : message.role === 'assistant' ? 'AI' : '系统' }}{{ message.message_id === source.message_id ? ' · 来源消息' : '' }}</small><p>{{ message.content }}</p></div></div></details>
                 <form @submit.prevent="saveDecision"><div class="decision-form"><label class="field"><span>决策状态</span><select v-model="decisionForm.status"><option v-for="(label, key) in decisionLabels" :key="key" :value="key">{{ label }}</option></select></label><label class="field"><span>选择理由</span><textarea v-model="decisionForm.reason" rows="5" maxlength="5000" placeholder="为什么采纳或暂不采纳？"></textarea></label></div><div class="decision-note"><span>✦</span> 采纳后的想法可以在创建任务时关联。</div><div class="save-row"><span>决策可随时修改</span><button class="primary-button" type="submit" :disabled="saving">{{ saving ? '保存中…' : '保存决策' }}</button></div></form>
+                <div class="history"><div class="history-title"><h3>决策记录</h3><span>按时间记录</span></div><p v-if="!decisionEvents.length">暂无决策记录；升级前的修改无法追溯。</p><ol v-else><li v-for="event in decisionEvents" :key="event.event_id"><span class="history-dot"></span><div class="history-entry"><strong>{{ event.event_type === 'created' ? '记录了决策' : '修改了决策' }}</strong><small>{{ formatDate(event.created_at) }}</small><dl><div v-for="(change, field) in event.changes" :key="field"><dt>{{ field === 'status' ? '决策状态' : '选择理由' }}</dt><dd><span>{{ field === 'status' ? (decisionLabels[change.from] || '未记录') : (change.from || '未填写') }}</span><span aria-hidden="true"> → </span><span>{{ field === 'status' ? (decisionLabels[change.to] || '未记录') : (change.to || '未填写') }}</span></dd></div></dl></div></li></ol></div>
                 <div class="linked-tasks"><div class="history-title"><h3>关联任务</h3><span>{{ linkedTasks.length }} 项</span></div><p v-if="!linkedTasks.length">暂无关联任务。</p><RouterLink v-for="task in linkedTasks" :key="task.task_id" :to="{ name: 'tasks', query: { task: task.task_id } }"><strong>{{ task.title }}</strong><span class="status-pill" :class="task.status">{{ statusLabels[task.status] }}</span></RouterLink></div>
               </template>
               <div v-else class="empty-detail"><h2 id="decision-title">选择一条想法</h2><p>在这里记录是否采纳及选择理由。</p></div>

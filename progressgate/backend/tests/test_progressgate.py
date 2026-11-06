@@ -9,6 +9,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from app import demo
 from app.db import get_session
 from app.main import app
+from app.models import Decision
 
 
 PROJECT = "11111111-1111-4111-8111-111111111111"
@@ -87,6 +88,51 @@ def test_manual_tasks_and_decision_are_independent(client):
     assert len(client.get(f"/api/projects/{PROJECT}/tasks").json()) == 1
 
 
+def test_decision_history_and_unchanged_save(client):
+    url = f"/api/ideas/{IDEA}/decision"
+    assert client.get(f"{url}/events").json() == []
+    assert client.get(f"/api/ideas/{uuid4()}/decision/events").status_code == 404
+    first = client.put(url, json={"status": "adopted", "reason": "先做原型"}).json()
+    assert client.put(url, json={"status": "adopted", "reason": "先做原型"}).json()["updated_at"] == first["updated_at"]
+    client.put(url, json={"status": "rejected", "reason": "条件变化"})
+    client.put(url, json={"status": "rejected", "reason": ""})
+    events = client.get(f"{url}/events").json()
+    assert [event["event_type"] for event in events] == ["created", "updated", "updated"]
+    assert events[0]["changes"]["status"] == {"from": None, "to": "adopted"}
+    assert events[1]["changes"] == {"status": {"from": "adopted", "to": "rejected"},
+                                     "reason": {"from": "先做原型", "to": "条件变化"}}
+    assert events[2]["changes"] == {"reason": {"from": "条件变化", "to": None}}
+
+
+def test_existing_decision_starts_history_on_next_change(tmp_path, monkeypatch):
+    # Simulate a pre-upgrade database without the new event table.
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}", connect_args={"check_same_thread": False})
+    old_tables = [table for table in SQLModel.metadata.sorted_tables if table.name != "decisionevent"]
+    SQLModel.metadata.create_all(engine, tables=old_tables)
+    with Session(engine) as session:
+        session.add(Decision(project_id=PROJECT, idea_id=IDEA, status="pending", reason="原有理由"))
+        session.commit()
+
+    def old_database_session():
+        with Session(engine) as session:
+            yield session
+
+    monkeypatch.setattr("app.main.create_tables", lambda: SQLModel.metadata.create_all(engine))
+    app.dependency_overrides[get_session] = old_database_session
+    try:
+        with TestClient(app) as client:
+            url = f"/api/ideas/{IDEA}/decision"
+            assert client.get(url).json()["reason"] == "原有理由"
+            assert client.get(f"{url}/events").json() == []
+            assert client.put(url, json={"status": "adopted", "reason": "新理由"}).status_code == 200
+            events = client.get(f"{url}/events").json()
+            assert len(events) == 1 and events[0]["event_type"] == "updated"
+            assert events[0]["changes"]["reason"] == {"from": "原有理由", "to": "新理由"}
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
+
+
 def test_demo_source_context_and_manual_idea(client):
     sources = client.get(f"/api/demo/ideas/{IDEA}/sources")
     assert sources.status_code == 200
@@ -162,6 +208,7 @@ def test_records_survive_database_reopen(tmp_path, monkeypatch):
         decision = client.get(f"/api/ideas/{IDEA}/decision").json()
         assert decision["status"] == "adopted"
         assert decision["reason"] == "保留来源，方便回顾"
+        assert client.get(f"/api/ideas/{IDEA}/decision/events").json()[0]["changes"]["reason"]["to"] == "保留来源，方便回顾"
         tasks = client.get(f"/api/projects/{PROJECT}/tasks").json()
         assert [task["task_id"] for task in tasks] == [task_id]
         task = client.get(f"/api/tasks/{task_id}").json()
