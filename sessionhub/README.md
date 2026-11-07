@@ -1,7 +1,3 @@
----
-AIGC: {"Label":"1","ContentProducer":"001191110108MA01KP2T5U00000","ProduceID":"5bf71972-2e10-47e9-9f74-1d34f77c6166","ReservedCode1":"","ContentPropagator":"001191110108MA01KP2T5U00000","PropagateID":"5bf71972-2e10-47e9-9f74-1d34f77c6166","ReservedCode2":""}
----
-
 # sessionhub —— 会话导入与管理（第一模块）
 
 负责人：王语晨
@@ -42,6 +38,3 @@ AIGC: {"Label":"1","ContentProducer":"001191110108MA01KP2T5U00000","ProduceID":"
 - 字段与接口遵循 `docs/开工方案与接口约定-讨论稿.md` 及组内《公共数据约定》。
 - 消息 `role` 只使用 `user`、`assistant`、`system`；`created_at` 可为 `null`，消息顺序由导入顺序保证。
 - 文件夹名 `sessionhub` 为暂定名，待小组确认。
-
----
-*智谱AI生成*
