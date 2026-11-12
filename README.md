@@ -28,7 +28,7 @@
 
 第 7 组，项目选题已通过，已确定采用网页应用形式。当前完成的是阶段性独立演示，整个项目和第四模块均未全部完成。
 
-ProgressGate 已有决策、任务、阻塞与历史记录的本地演示，项目、想法和来源仍来自模拟样例。第三模块的想法卡片初版位于 `dev-part3` 分支，尚未与第四模块联通；其他成员成果以各自实际提交为准。
+ProgressGate 已有决策、任务、阻塞与历史记录的本地演示，并增加截止日期提示和任务筛选；项目、想法和来源仍来自模拟样例。第三模块的想法卡片代码位于 `dev-part3` 分支，尚未与第四模块联通；最新字段差异见[接口对接清单](docs/coordination/ProgressGate-第三周接口对接清单.md)，其他成员成果以各自实际提交为准。
 
 整体打包暂缓，等待组员完成提交。代码所在分支、已知接口差异及收齐材料后的检查顺序见 [仓库现状与集成待办](docs/coordination/仓库现状与集成待办.md)。
 
@@ -41,6 +41,8 @@ ProgressGate 已有决策、任务、阻塞与历史记录的本地演示，项�
 - [ProgressGate 运行与接口说明](progressgate/README.md)
 - [第四模块第一周进展](docs/weekly/第1周-唐逸飞-决策与任务跟踪.md)
 - [第四模块第二周进展](docs/weekly/第2周-唐逸飞-决策与任务跟踪.md)
+- [第四模块第三周进展](docs/weekly/第3周-唐逸飞-决策与任务跟踪.md)
+- [第四模块接口对接清单](docs/coordination/ProgressGate-第三周接口对接清单.md)
 - [第四模块需求分析](docs/requirements/决策与任务跟踪-需求分析.md)
 - [第四模块第一阶段验证](docs/testing/ProgressGate-第一阶段验证记录.md)
 - [界面原型（示例数据）](progressgate/design-preview/README.md)

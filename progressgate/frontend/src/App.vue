@@ -1,7 +1,8 @@
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import BrandMark from './components/BrandMark.vue'
+import { deadlineState, localDateKey, selectTasks } from './task-list.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -13,6 +14,12 @@ const events = ref([])
 const decisionEvents = ref([])
 const selectedId = ref(null)
 const activeFilter = ref('all')
+const deadlineFilter = ref('all')
+const taskSort = ref('newest')
+const today = ref(localDateKey())
+const taskHistoryLoading = ref(false)
+let taskHistoryRequest = 0
+let calendarTimer
 const search = ref('')
 const loading = ref(true)
 const saving = ref(false)
@@ -38,17 +45,18 @@ const selectedIdea = computed(() => ideas.value.find(idea => idea.idea_id === se
 const linkedTasks = computed(() => tasks.value.filter(task => task.idea_id === selectedIdeaId.value))
 const counts = computed(() => ({
   all: tasks.value.length,
+  todo: tasks.value.filter(task => task.status === 'todo').length,
   in_progress: tasks.value.filter(task => task.status === 'in_progress').length,
   blocked: tasks.value.filter(task => task.status === 'blocked').length,
   done: tasks.value.filter(task => task.status === 'done').length,
 }))
-const visibleTasks = computed(() => tasks.value.filter(task => {
-  const matchesStatus = activeFilter.value === 'all' || task.status === activeFilter.value
-  const term = search.value.trim().toLowerCase()
-  return matchesStatus && (!term || `${task.title} ${task.assignee || ''}`.toLowerCase().includes(term))
+const visibleTasks = computed(() => selectTasks(tasks.value, {
+  status: activeFilter.value, deadline: deadlineFilter.value, search: search.value, sort: taskSort.value, today: today.value,
 }))
+const hasFilters = computed(() => activeFilter.value !== 'all' || deadlineFilter.value !== 'all' || search.value.trim())
 const cards = [
   { key: 'all', label: '全部任务', hint: '项目中的任务', icon: '▦' },
+  { key: 'todo', label: '待开始', hint: '准备开始', icon: '○' },
   { key: 'in_progress', label: '进行中', hint: '正在推进', icon: '↗' },
   { key: 'blocked', label: '受阻', hint: '需要跟进', icon: '!' },
   { key: 'done', label: '已完成', hint: '已记录结果', icon: '✓' },
@@ -90,15 +98,26 @@ async function syncTaskLocation() {
 }
 
 async function loadTaskDetails() {
+  const request = ++taskHistoryRequest
   const task = selectedTask.value
-  if (!task) { events.value = []; return }
+  events.value = []
+  taskHistoryLoading.value = false
+  if (!task) return
   Object.assign(edit, {
     title: task.title, description: task.description || '', assignee: task.assignee || '', due_date: task.due_date || '',
     completion_condition: task.completion_condition || '', status: task.status,
     block_reason: task.block_reason || '', error_excerpt: task.error_excerpt || '', attempted_steps: task.attempted_steps || '',
     next_step: task.next_step || '', resolution: task.resolution || '', result: task.result || '',
   })
-  events.value = await api(`/api/tasks/${task.task_id}/events`)
+  taskHistoryLoading.value = true
+  try {
+    const result = await api(`/api/tasks/${task.task_id}/events`)
+    if (request === taskHistoryRequest && selectedId.value === task.task_id) events.value = result
+  } catch (err) {
+    if (request === taskHistoryRequest && selectedId.value === task.task_id) error.value = err.message
+  } finally {
+    if (request === taskHistoryRequest) taskHistoryLoading.value = false
+  }
 }
 
 async function selectTask(task) {
@@ -183,6 +202,7 @@ async function createTask() {
     })
     dialog.value.close()
     activeFilter.value = 'all'
+    deadlineFilter.value = 'all'
     search.value = ''
     await refreshTasks(task.task_id)
     notice.value = '任务已创建。'
@@ -192,12 +212,13 @@ async function createTask() {
 
 async function saveTask() {
   if (!selectedTask.value) return
+  const taskId = selectedTask.value.task_id
   saving.value = true
   error.value = ''
   notice.value = ''
   try {
-    await api(`/api/tasks/${selectedTask.value.task_id}`, { method: 'PATCH', body: JSON.stringify({ ...edit, due_date: edit.due_date || null }) })
-    await refreshTasks(selectedTask.value.task_id)
+    await api(`/api/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify({ ...edit, due_date: edit.due_date || null }) })
+    await refreshTasks(selectedId.value)
     notice.value = '任务进展已保存。'
   } catch (err) { error.value = err.message }
   finally { saving.value = false }
@@ -242,7 +263,23 @@ function changeValue(field, value) {
   return field === 'status' ? (statusLabels[value] || value) : value
 }
 
-watch([activeFilter, search], reconcileSelection)
+function clearFilters() {
+  activeFilter.value = 'all'
+  deadlineFilter.value = 'all'
+  search.value = ''
+}
+
+function dueCaption(task) {
+  const state = deadlineState(task, today.value)
+  if (state === 'undated') return '未设截止日期'
+  if (state === 'overdue') return `${task.due_date} · 已逾期`
+  if (state === 'today') return `${task.due_date} · 今日到期`
+  return `截止 ${task.due_date}`
+}
+
+function refreshCalendar() { today.value = localDateKey() }
+
+watch([activeFilter, deadlineFilter, search, today], reconcileSelection)
 watch(selectedIdeaId, loadIdeaSources)
 watch(selectedIdeaId, loadDecisionEvents)
 watch(() => [route.name, route.query.idea, route.query.task], () => {
@@ -256,12 +293,21 @@ watch(() => [route.name, route.query.idea, route.query.task], () => {
     const task = tasks.value.find(item => item.task_id === route.query.task)
     if (task && task.task_id !== selectedId.value) {
       activeFilter.value = 'all'
+      deadlineFilter.value = 'all'
       search.value = ''
       selectTask(task)
     }
   }
 })
-onMounted(load)
+onMounted(() => {
+  load()
+  calendarTimer = window.setInterval(refreshCalendar, 60_000)
+  window.addEventListener('focus', refreshCalendar)
+})
+onUnmounted(() => {
+  window.clearInterval(calendarTimer)
+  window.removeEventListener('focus', refreshCalendar)
+})
 </script>
 
 <template>
@@ -322,10 +368,16 @@ onMounted(load)
             <section class="panel task-list-panel" aria-labelledby="task-list-title">
               <div class="panel-heading"><div><h2 id="task-list-title">任务列表</h2><p>聚焦眼前，逐步完成</p></div><span class="count-pill">{{ visibleTasks.length }}</span></div>
               <label class="search-field"><span aria-hidden="true">⌕</span><input v-model="search" type="search" placeholder="搜索任务或负责人" aria-label="搜索任务或负责人" /></label>
+              <div class="task-controls">
+                <label><span>截止日期</span><select v-model="deadlineFilter"><option value="all">全部日期</option><option value="overdue">已逾期（未完成）</option><option value="today">今日到期（未完成）</option><option value="undated">未设截止日期</option></select></label>
+                <label><span>排序</span><select v-model="taskSort"><option value="newest">最近创建</option><option value="due_date">截止日期从近到远</option></select></label>
+              </div>
+              <div v-if="hasFilters" class="filter-summary"><span>显示 {{ visibleTasks.length }} / {{ tasks.length }} 项</span><button type="button" class="text-button" @click="clearFilters">清除筛选</button></div>
               <div v-if="visibleTasks.length" class="task-list">
                 <button v-for="task in visibleTasks" :key="task.task_id" type="button" class="task-item" :class="{ selected: task.task_id === selectedId }" @click="selectTask(task)">
                   <span class="task-item-top"><span class="status-dot" :class="task.status"></span><strong>{{ task.title }}</strong><span class="task-arrow">↗</span></span>
                   <span class="task-item-bottom"><span class="status-pill" :class="task.status">{{ statusLabels[task.status] }}</span><span>{{ task.assignee || '未指定负责人' }}</span></span>
+                  <span class="task-due" :class="deadlineState(task, today)">{{ dueCaption(task) }}</span>
                 </button>
               </div>
               <div v-else class="empty-list"><div class="empty-icon">▤</div><strong>{{ tasks.length ? '没有匹配的任务' : '还没有任务' }}</strong><p>{{ tasks.length ? '试试其他筛选条件。' : '创建第一个任务，开始记录进展。' }}</p><button v-if="!tasks.length" type="button" class="text-button" @click="openCreate">＋ 新建任务</button></div>
@@ -334,6 +386,7 @@ onMounted(load)
             <section class="panel detail-panel" aria-labelledby="detail-title">
               <template v-if="selectedTask">
                 <div class="detail-head"><div><div class="eyebrow muted">TASK DETAILS</div><h2 id="detail-title">任务详情</h2><p>更新进展，保留处理过程。</p></div><span class="status-pill" :class="selectedTask.status">{{ statusLabels[selectedTask.status] }}</span></div>
+                <p class="detail-deadline" :class="deadlineState(selectedTask, today)">{{ dueCaption(selectedTask) }}</p>
                 <form class="detail-form" @submit.prevent="saveTask">
                   <div class="form-grid"><label class="field full"><span>任务标题 <em>*</em></span><input v-model="edit.title" required maxlength="200" /></label>
                     <label class="field"><span>负责人</span><input v-model="edit.assignee" maxlength="100" placeholder="填写负责人" /></label>
@@ -354,7 +407,7 @@ onMounted(load)
                   </div>
                   <div class="save-row"><span>修改后记得保存</span><button class="primary-button" type="submit" :disabled="saving">{{ saving ? '保存中…' : '保存进展' }}</button></div>
                 </form>
-                <div class="history"><div class="history-title"><h3>进展记录</h3><span>按时间记录</span></div><ol><li v-for="event in events" :key="event.event_id"><span class="history-dot"></span><div class="history-entry"><strong>{{ eventText(event) }}</strong><small>{{ formatDate(event.created_at) }}</small><details v-if="Object.keys(event.changes).length"><summary>查看变更</summary><dl><div v-for="(change, field) in event.changes" :key="field"><dt>{{ fieldLabels[field] || field }}</dt><dd><span>{{ changeValue(field, change.from) }}</span><span aria-hidden="true"> → </span><span>{{ changeValue(field, change.to) }}</span></dd></div></dl></details></div></li></ol></div>
+                <div class="history" :aria-busy="taskHistoryLoading"><div class="history-title"><h3>进展记录</h3><span>按时间记录</span></div><p v-if="taskHistoryLoading" role="status">正在读取记录…</p><ol v-else><li v-for="event in events" :key="event.event_id"><span class="history-dot"></span><div class="history-entry"><strong>{{ eventText(event) }}</strong><small>{{ formatDate(event.created_at) }}</small><details v-if="Object.keys(event.changes).length"><summary>查看变更</summary><dl><div v-for="(change, field) in event.changes" :key="field"><dt>{{ fieldLabels[field] || field }}</dt><dd><span>{{ changeValue(field, change.from) }}</span><span aria-hidden="true"> → </span><span>{{ changeValue(field, change.to) }}</span></dd></div></dl></details></div></li></ol></div>
               </template>
               <div v-else class="empty-detail"><div class="empty-illustration"><span>✓</span></div><h2 id="detail-title">{{ tasks.length ? '选择一项任务' : '从一个任务开始' }}</h2><p>{{ tasks.length ? '选择左侧任务，查看和更新它的进展。' : '创建任务后，可以在这里记录负责人、进度、遇到的问题和处理结果。' }}</p><button v-if="!tasks.length" class="secondary-button" type="button" :disabled="!project" @click="openCreate">新建任务 <span>↗</span></button></div>
             </section>
