@@ -24,3 +24,6 @@ coverage/
 # Operating system files
 .DS_Store
 Thumbs.db
+
+# Runtime local databases (sessionhub backend)
+*.db
