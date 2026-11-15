@@ -1,4 +1,4 @@
-# 一次性把后端环境装好
+﻿# 一次性把后端环境装好
 # 用法：在仓库根目录执行  .\scripts\setup.ps1
 
 $ErrorActionPreference = 'Stop'

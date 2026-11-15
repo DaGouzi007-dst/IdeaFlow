@@ -1,4 +1,4 @@
-# 启动后端（带热重载），默认 8000 端口
+﻿# 启动后端（带热重载），默认 8000 端口
 # 用法：在仓库根目录执行  .\scripts\dev-backend.ps1
 
 $root = Split-Path -Parent $PSScriptRoot
