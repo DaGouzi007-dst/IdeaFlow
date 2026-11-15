@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>检索验证页 · 第二部分</title>
+<style>
+  body{font-family:system-ui;max-width:900px;margin:24px auto;padding:0 20px;line-height:1.6;color:#222}
+  h1{font-size:20px;margin-bottom:16px}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+  .bar input[type=text]{padding:8px 10px;border:1px solid #ccc;border-radius:6px;font-size:14px}
+  #q{flex:1;min-width:240px}
+  .bar label{font-size:14px;color:#555;display:flex;align-items:center;gap:4px}
+  button{padding:8px 18px;border:0;border-radius:6px;background:#4a90e2;color:#fff;font-size:14px;cursor:pointer}
+  button:disabled{background:#aaa;cursor:not-allowed}
+  #info{color:#888;font-size:13px;margin:8px 0 16px}
+  .card{border:1px solid #e3e3e3;border-radius:8px;padding:12px 16px;margin-bottom:10px;cursor:pointer;transition:box-shadow .15s}
+  .card:hover{box-shadow:0 2px 8px rgba(0,0,0,.08);border-color:#4a90e2}
+  .meta{display:flex;gap:10px;align-items:center;font-size:13px;color:#666;margin-bottom:6px}
+  .badge{background:#eef4fd;color:#4a90e2;border-radius:4px;padding:1px 8px;font-size:12px}
+  .snip{font-size:14px;color:#333}
+  mark{background:#fff3a0;padding:0 2px}
+  .empty{color:#999;text-align:center;padding:40px 0}
+</style>
+</head>
+<body>
+<h1>检索验证页</h1>
+
+<div class="bar">
+  <input id="q" type="text" placeholder="输入关键词，回车搜索…" autofocus>
+  <input id="project" type="text" placeholder="项目 ID（可空）" style="width:130px">
+  <label><input type="checkbox" class="tool" value="ChatGPT">ChatGPT</label>
+  <label><input type="checkbox" class="tool" value="Claude">Claude</label>
+  <label><input type="checkbox" class="tool" value="Cursor">Cursor</label>
+  <button id="btn">搜索</button>
+</div>
+
+<div id="info"></div>
+<div id="list"></div>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// 后端 highlights 是 Unicode 码点偏移，JS slice 是 UTF-16，需按码点切
+function cpSlice(str, a, b) {
+  return Array.from(str).slice(a, b).join('');
+}
+
+function renderSnippet(snippet, highlights) {
+  const cps = Array.from(snippet);
+  if (!highlights || !highlights.length) return esc(snippet);
+  let out = '', last = 0;
+  for (const [a, b] of highlights) {
+    if (a > last) out += esc(cps.slice(last, a).join(''));
+    out += '<mark>' + esc(cps.slice(a, b).join('')) + '</mark>';
+    last = b;
+  }
+  if (last < cps.length) out += esc(cps.slice(last).join(''));
+  return out;
+}
+
+async function doSearch() {
+  const q = document.getElementById('q').value.trim();
+  if (!q) return;
+  const btn = document.getElementById('btn');
+  const info = document.getElementById('info');
+  btn.disabled = true;
+  info.textContent = '搜索中…';
+
+  const body = { q };
+  const projectId = document.getElementById('project').value.trim();
+  if (projectId) body.projectId = projectId;
+  const tools = [...document.querySelectorAll('.tool:checked')].map(x => x.value);
+  if (tools.length) body.tools = tools;
+
+  try {
+    const r = await fetch('/api/search', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    render(await r.json());
+  } catch (e) {
+    info.textContent = '请求失败：' + e.message;
+    document.getElementById('list').innerHTML = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function render(data) {
+  const info = document.getElementById('info');
+  const relaxHint = data.relaxed
+    ? ' · <span style="color:#e67e22">未找到同时含全部关键词的消息，已放宽为包含任一词</span>'
+    : '';
+  info.innerHTML = `共 ${data.total} 条 · ${data.tookMs}ms${relaxHint}`;
+  const list = document.getElementById('list');
+
+  if (!data.hits.length) {
+    list.innerHTML = '<p class="empty">没有匹配的结果，试试减少关键词或清除筛选</p>';
+    return;
+  }
+
+  list.innerHTML = data.hits.map(h => {
+    const ref = h.ref;
+    const hl = (ref.charStart != null && ref.charEnd != null)
+      ? `&hl=${ref.charStart}-${ref.charEnd}` : '';
+    const url = `/viewer/projects/${encodeURIComponent(ref.projectId)}`
+              + `/sessions/${encodeURIComponent(ref.sessionId)}`
+              + `?msg=${encodeURIComponent(ref.messageId)}${hl}`;
+    return `<div class="card" data-url="${esc(url)}">
+      <div class="meta">
+        <span class="badge">${esc(h.tool)}</span>
+        <span>${esc(h.sessionTitle)}</span>
+        <span>${esc((h.createdAt || '').slice(0, 10))}</span>
+        <span>${h.role === 'user' ? '用户' : 'AI'}</span>
+      </div>
+      <div class="snip">${renderSnippet(h.snippet, h.highlights)}</div>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('.card').forEach(el => {
+    el.addEventListener('click', () => window.open(el.dataset.url, '_blank'));
+  });
+}
+
+document.getElementById('btn').addEventListener('click', doSearch);
+document.getElementById('q').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doSearch();
+});
+</script>
+</body>
+</html>

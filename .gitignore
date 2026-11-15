@@ -8,6 +8,7 @@
 *.pem
 *.key
 
+
 # Dependencies and generated files; refine after choosing the stack
 node_modules/
 .venv/
@@ -24,3 +25,5 @@ coverage/
 # Operating system files
 .DS_Store
 Thumbs.db
+
+backend/search.db

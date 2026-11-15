@@ -5,19 +5,19 @@ import jieba
 from contracts import SearchQuery
 
 
-def build_match(q: str) -> str:
-    words = [w for w in jieba.lcut(q) if re.search(r"\w", w)]
+def build_match(q: str, op: str = "AND") -> str:
+    words = [w for w in jieba.lcut(q) if re.search(r"\w", w) and w.upper() != "OR"]
     if not words:
         return ""
-    return " AND ".join(f'"{w.replace(chr(34), chr(34) * 2)}"' for w in words)
+    return f" {op} ".join(f'"{w.replace(chr(34), chr(34)*2)}"' for w in words)
 
 
 class KeywordRetriever:
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn):
         self.conn = conn
 
-    def search(self, q: SearchQuery, limit: int) -> list[tuple[str, float]]:
-        expr = build_match(q.q)
+    def search(self, q: SearchQuery, limit: int, op: str = "AND") -> list[tuple[str, float]]:
+        expr = build_match(q.q, op)
         if not expr:
             return []
         sql = (

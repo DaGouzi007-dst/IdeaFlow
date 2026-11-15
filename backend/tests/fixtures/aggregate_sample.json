@@ -1,0 +1,26 @@
+{
+  "projects": [
+    {"project_id": "P1", "name": "校园二手交易平台"},
+    {"project_id": "P2", "name": "AI 摘要工具"}
+  ],
+  "conversations": [
+    {"conversation_id": "S1", "project_id": "P1", "title": "数据库选型讨论", "source": "ChatGPT", "source_conversation_id": "c-001"},
+    {"conversation_id": "S2", "project_id": "P1", "title": "订单状态机设计", "source": "Claude",  "source_conversation_id": "c-002"},
+    {"conversation_id": "S3", "project_id": "P1", "title": "后端接口实现",   "source": "Cursor",  "source_conversation_id": "c-003"},
+    {"conversation_id": "S4", "project_id": "P2", "title": "摘要算法对比",   "source": "ChatGPT", "source_conversation_id": "c-004"}
+  ],
+  "messages": [
+    {"conversation_id": "S1", "role": "user",      "content": "MySQL 还是 PostgreSQL？",                                   "created_at": "2024-05-10T10:00:00+08:00"},
+    {"conversation_id": "S1", "role": "assistant", "content": "建议 PostgreSQL，事务和 JSON 支持更好。",                    "created_at": "2024-05-10T10:01:00+08:00"},
+    {"conversation_id": "S1", "role": "user",      "content": "那缓存用什么？",                                            "created_at": "2024-05-10T10:03:00+08:00"},
+    {"conversation_id": "S1", "role": "assistant", "content": "Redis 做缓存，注意缓存击穿：热点 key 过期瞬间大量请求打库。😀", "created_at": "2024-05-10T10:05:00+08:00"},
+    {"conversation_id": "S2", "role": "user",      "content": "订单状态怎么设计？",                                        "created_at": "2024-05-11T09:00:00+08:00"},
+    {"conversation_id": "S2", "role": "assistant", "content": "用状态机，注意幂等：重复回调不能重复扣库存。",                "created_at": "2024-05-11T09:01:00+08:00"},
+    {"conversation_id": "S2", "role": "user",      "content": "并发下呢？",                                                "created_at": "2024-05-11T09:03:00+08:00"},
+    {"conversation_id": "S2", "role": "assistant", "content": "并发下谈乐观锁和悲观锁的区别。",                              "created_at": "2024-05-11T09:05:00+08:00"},
+    {"conversation_id": "S3", "role": "user",      "content": "登录接口用 JWT 还是 session？",                              "created_at": "2024-05-12T14:00:00+08:00"},
+    {"conversation_id": "S3", "role": "assistant", "content": "JWT 无状态，适合前后端分离。",                                "created_at": "2024-05-12T14:01:00+08:00"},
+    {"conversation_id": "S3", "role": "user",      "content": "那 Redis 存黑名单可以吗？",                                  "created_at": "2024-05-12T14:03:00+08:00"},
+    {"conversation_id": "S4", "role": "user",      "content": "TextRank 和 JWT 没关系吧，我说的是摘要算法。",                "created_at": "2024-05-13T11:00:00+08:00"}
+  ]
+}

@@ -60,6 +60,7 @@ class SearchResult(Base):
     total: int
     page: int
     took_ms: int
+    relaxed: bool = False      # ← 新增
 
 
 # contracts.py 修改 ResolvedSource，新增 BatchResolveRequest

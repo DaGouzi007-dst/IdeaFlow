@@ -1,7 +1,10 @@
 # backend/tests/test_integration.py
-import json, os, sqlite3
+import json, os, sys, sqlite3
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import pytest
 from contracts import SearchQuery, SourceRef
+from contracts import BatchResolveRequest
 from indexer import Indexer, init_db
 from retriever import KeywordRetriever
 from source import LocalSource
