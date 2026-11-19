@@ -1,3 +1,10 @@
+import json
+import math
+import os
+import urllib.parse
+import urllib.request
+from collections import Counter
+
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -21,7 +28,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
+# 新建 json
 class IdeaIn(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     summary: str = ""
@@ -30,7 +37,7 @@ class IdeaIn(BaseModel):
     tags: list[str] = []
     project_id: str = "demo-project"
 
-
+# 修改 json
 class IdeaPatch(BaseModel):
     title: str | None = None
     summary: str | None = None
@@ -39,24 +46,36 @@ class IdeaPatch(BaseModel):
     tags: list[str] | None = None
     favorite: bool | None = None
 
+# 加出处json
+class SourceRef(BaseModel):
+    """第二部分定义的坐标，字段名跟他们的契约一致（驼峰）。"""
+
+    projectId: str
+    sessionId: str
+    messageId: str
+    charStart: int | None = None
+    charEnd: int | None = None
+    snippet: str | None = None
+
 
 class SourceIn(BaseModel):
     message_id: str = Field(min_length=1)
     source_ref: str | None = None
     quote: str | None = None
+    ref: SourceRef | None = None  # 有坐标就传，老调用不传也照旧
 
-
+# 建立关系
 class RelationIn(BaseModel):
     from_idea_id: str
     to_idea_id: str
     relation_type: str
     note: str | None = None
 
-
+# 改状态
 class RelationPatch(BaseModel):
     status: str
 
-
+# 三个数据库工具函数
 def out(session: Session, idea: Idea) -> dict:
     """把一行 idea 转成前端要的样子，出处单独查。"""
     rows = session.exec(select(IdeaSource).where(IdeaSource.idea_id == idea.idea_id)).all()
@@ -99,6 +118,53 @@ def find(session: Session, idea_id: str) -> Idea:
     return idea
 
 
+# ---------- 相似推荐 ----------
+# 中文不做分词，按字符二元组切；IDF 让"想法""卡片"这种到处都有的词自动变轻
+
+
+def grams(text: str) -> list[str]:
+    s = "".join(c for c in text if c.isalnum())
+    return [s[i : i + 2] for i in range(len(s) - 1)]
+
+
+def vectorize(docs: list[str]) -> list[dict]:
+    counts = [Counter(grams(d)) for d in docs]
+    df = Counter()
+    for c in counts:
+        df.update(c.keys())
+    n = len(docs)
+    vecs = []
+    for c in counts:
+        total = sum(c.values()) or 1
+        vec = {w: (k / total) * (math.log((1 + n) / (1 + df[w])) + 1) for w, k in c.items()}
+        norm = math.sqrt(sum(x * x for x in vec.values())) or 1
+        vecs.append({w: x / norm for w, x in vec.items()})  # 归一化后点积就是余弦
+    return vecs
+
+
+def idea_text(idea: Idea) -> str:
+    """标题写两遍，权重最高；说明、标签、前提一起参与。"""
+    tags = " ".join((idea.tags or "").split(","))
+    return f"{idea.title} {idea.title} {idea.summary or ''} {tags} {idea.premise or ''}"
+
+
+def source_out(row: IdeaSource) -> dict:
+    """出处对外多带一个拆开的 ref；旧的 source_ref 照样原样返回。"""
+    ref = None
+    if row.source_ref and row.source_ref.startswith("{"):
+        try:
+            ref = json.loads(row.source_ref)
+        except ValueError:
+            ref = None
+    return {
+        "message_id": row.message_id,
+        "source_ref": row.source_ref,
+        "ref": ref,
+        "quote": row.quote,
+        "created_at": row.created_at,
+    }
+
+
 @app.get("/api/ideas")
 def list_ideas(q: str | None = None):
     with Session(models.engine) as session:
@@ -116,6 +182,27 @@ def list_ideas(q: str | None = None):
 def get_idea(idea_id: str):
     with Session(models.engine) as session:
         return out(session, find(session, idea_id))
+
+
+@app.get("/api/ideas/{idea_id}/similar")
+def similar_ideas(idea_id: str, limit: int = 3):
+    """找措辞接近的卡片，只做提示，不自动建关系。"""
+    if not 1 <= limit <= 10:
+        raise HTTPException(422, "limit 取 1 到 10")
+    with Session(models.engine) as session:
+        idea = find(session, idea_id)
+        others = [row for row in session.exec(select(Idea)).all() if row.idea_id != idea_id]
+        if not others:
+            return []
+        vecs = vectorize([idea_text(idea)] + [idea_text(row) for row in others])
+        pairs = [(sum(x * vecs[i + 1].get(w, 0) for w, x in vecs[0].items()), row) for i, row in enumerate(others)]
+        pairs.sort(key=lambda p: p[0], reverse=True)
+        weak = not (idea.summary or "").strip()  # 没写说明时推荐会飘，告诉前端
+        return [
+            {"idea_id": row.idea_id, "title": row.title, "score": round(score, 3), "weak": weak}
+            for score, row in pairs
+            if score >= 0.25
+        ][:limit]
 
 
 @app.post("/api/ideas", status_code=201)
@@ -182,14 +269,15 @@ def list_sources(idea_id: str):
         rows = session.exec(
             select(IdeaSource).where(IdeaSource.idea_id == idea_id).order_by(IdeaSource.created_at)
         ).all()
-        return [
-            {"message_id": r.message_id, "source_ref": r.source_ref, "quote": r.quote, "created_at": r.created_at}
-            for r in rows
-        ]
+        return [source_out(r) for r in rows]
 
 
 @app.post("/api/ideas/{idea_id}/sources", status_code=201)
 def add_source(idea_id: str, payload: SourceIn):
+    if payload.ref and not (payload.quote and payload.quote.strip()):
+        raise HTTPException(422, "有坐标的出处必须带原文片段")
+    if payload.ref and payload.ref.messageId != payload.message_id:
+        raise HTTPException(422, "坐标里的 messageId 和 message_id 对不上")
     with Session(models.engine) as session:
         find(session, idea_id)
         if session.get(IdeaSource, (idea_id, payload.message_id)):
@@ -197,12 +285,30 @@ def add_source(idea_id: str, payload: SourceIn):
         row = IdeaSource(
             idea_id=idea_id,
             message_id=payload.message_id,
-            source_ref=payload.source_ref,
+            source_ref=payload.ref.model_dump_json() if payload.ref else payload.source_ref,
             quote=payload.quote,
         )
         session.add(row)
         session.commit()
-        return {"message_id": row.message_id, "source_ref": row.source_ref, "quote": row.quote, "created_at": row.created_at}
+        return source_out(row)
+
+
+@app.get("/api/source-link")
+def source_link(projectId: str, sessionId: str, messageId: str,
+                charStart: int | None = None, charEnd: int | None = None):
+    """跳转地址不自己拼，转去问第二部分要，省得以后他们改格式。"""
+    base = os.environ.get("PART2_BASE", "http://127.0.0.1:8002")
+    params = {"projectId": projectId, "sessionId": sessionId, "messageId": messageId}
+    if charStart is not None and charEnd is not None:
+        params["charStart"] = charStart
+        params["charEnd"] = charEnd
+    url = base.rstrip("/") + "/api/trace/link?" + urllib.parse.urlencode(params)
+    try:
+        with urllib.request.urlopen(url, timeout=2) as resp:
+            link = json.loads(resp.read().decode("utf-8"))["link"]
+    except Exception:
+        raise HTTPException(503, "第二部分没启动，先起来再点（PART2_BASE 指向它的地址）")
+    return {"link": link if link.startswith("http") else base.rstrip("/") + link}
 
 
 @app.delete("/api/ideas/{idea_id}/sources/{message_id}", status_code=204)

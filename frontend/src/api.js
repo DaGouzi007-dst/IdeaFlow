@@ -19,8 +19,15 @@ export const api = {
   remove: (id) => call('/ideas/' + id, 'DELETE'),
 
   sources: (id) => call(`/ideas/${id}/sources`),
+  similar: (id, limit = 3) => call(`/ideas/${id}/similar?limit=${limit}`),
   addSource: (id, data) => call(`/ideas/${id}/sources`, 'POST', data),
   removeSource: (id, messageId) => call(`/ideas/${id}/sources/${messageId}`, 'DELETE'),
+
+  // 拿到坐标后去后端换一个能跳的地址，地址格式不归我们管
+  sourceLink: (ref) => {
+    const q = new URLSearchParams({ ...ref }).toString()
+    return call('/source-link?' + q)
+  },
 
   relations: (id) => call(`/ideas/${id}/relations`),
   relate: (data) => call('/relations', 'POST', data),

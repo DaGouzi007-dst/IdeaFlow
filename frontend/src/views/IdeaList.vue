@@ -7,7 +7,7 @@ const ideas = ref([])
 const keyword = ref('')
 const loading = ref(false)
 const error = ref('')
-const form = reactive({ title: '', summary: '', tags: '', premise: '', stage: '现在做' })
+const form = reactive({ project_id: 'demo-project', title: '', summary: '', tags: '', premise: '', stage: '现在做' })
 
 async function load() {
   loading.value = true
@@ -31,6 +31,10 @@ function search() {
 async function create() {
   if (!form.title.trim()) {
     error.value = '标题不能为空'
+    return
+  }
+  if (!form.project_id.trim()) {
+    error.value = '项目编号不能为空'
     return
   }
   try {
@@ -74,14 +78,17 @@ onMounted(load)
     <p v-if="error" class="error">{{ error }}</p>
 
     <form class="card create" @submit.prevent="create">
+      <div class="row two">
+        <input v-model="form.project_id" placeholder="项目编号" />
+        <select v-model="form.stage">
+          <option v-for="stage in stages" :key="stage" :value="stage">{{ stage }}</option>
+        </select>
+      </div>
       <input v-model="form.title" placeholder="想法标题（必填）" maxlength="200" />
       <input v-model="form.summary" placeholder="一句话说明" />
       <div class="row">
         <input v-model="form.tags" placeholder="标签，逗号分隔" />
         <input v-model="form.premise" placeholder="适用条件：什么前提下才成立" />
-        <select v-model="form.stage">
-          <option v-for="stage in stages" :key="stage" :value="stage">{{ stage }}</option>
-        </select>
       </div>
       <button type="submit">记下来</button>
     </form>
@@ -130,7 +137,8 @@ onMounted(load)
 .head p { margin: 0 0 20px; color: #6b7280; }
 
 .create { display: grid; gap: 10px; margin-bottom: 16px; }
-.row { display: grid; grid-template-columns: 1fr 1fr 120px; gap: 10px; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.row.two { grid-template-columns: 1fr 120px; }
 
 .search { display: flex; gap: 8px; margin: 20px 0 12px; }
 .search input { flex: 1; }

@@ -11,6 +11,7 @@ const types = ['重复', '互补', '冲突']
 const idea = ref(null)
 const sources = ref([])
 const relations = ref([])
+const similar = ref([])
 const others = ref([])
 const error = ref('')
 const editing = ref(false)
@@ -23,6 +24,7 @@ async function load() {
     idea.value = await api.get(route.params.id)
     sources.value = await api.sources(route.params.id)
     relations.value = await api.relations(route.params.id)
+    similar.value = await api.similar(route.params.id)
   } catch (e) {
     error.value = e.message
   }
@@ -100,9 +102,26 @@ async function setRelation(rel, status) {
   }
 }
 
-// 模块 1 的会话页还没接上，先把原文显示出来
-function backToQuote(source) {
-  alert(`模块 1 的会话页还没接上，先看原文：\n\n${source.quote || '（这条出处没存原文）'}`)
+// 系统只提示"措辞像"，标不标重复由人决定
+async function markDuplicate(item) {
+  try {
+    await api.relate({ from_idea_id: idea.value.idea_id, to_idea_id: item.idea_id, relation_type: '重复' })
+    relations.value = await api.relations(idea.value.idea_id)
+    similar.value = similar.value.filter((s) => s.idea_id !== item.idea_id)
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+// 有坐标就问第二模块要跳转地址，没有坐标就只显示原文
+async function backToQuote(source) {
+  if (!source.ref) return
+  try {
+    const { link } = await api.sourceLink(source.ref)
+    window.open(link, '_blank')
+  } catch (e) {
+    error.value = e.message
+  }
 }
 
 onMounted(async () => {
@@ -133,6 +152,7 @@ onMounted(async () => {
       <template v-if="!editing">
         <p>{{ idea.summary || '（还没有说明）' }}</p>
         <p class="premise">前提：{{ idea.premise || '未填' }}</p>
+        <p class="hint">项目：{{ idea.project_id }}</p>
         <p v-if="idea.tags.length" class="tags">
           <span v-for="tag in idea.tags" :key="tag">{{ tag }}</span>
         </p>
@@ -162,12 +182,30 @@ onMounted(async () => {
         <li v-for="source in sources" :key="source.message_id" class="card">
           <div class="row">
             <strong>{{ source.message_id }}</strong>
-            <span v-if="source.source_ref" class="hint">{{ source.source_ref }}</span>
+            <span v-if="source.source_ref && !source.ref" class="hint">{{ source.source_ref }}</span>
+            <span v-else-if="source.ref" class="hint">会话 {{ source.ref.sessionId }}</span>
           </div>
           <p v-if="source.quote" class="quote">“{{ source.quote }}”</p>
           <div class="bar">
-            <button type="button" class="plain" @click="backToQuote(source)">回到原话</button>
+            <button type="button" class="plain" :disabled="!source.ref"
+                    :title="source.ref ? '跳到原文那一句' : '这条出处没存坐标，跳不回去'"
+                    @click="backToQuote(source)">回到原话</button>
             <button type="button" class="danger" @click="removeSource(source)">移除出处</button>
+          </div>
+        </li>
+      </ul>
+
+      <h2>可能重复</h2>
+      <p v-if="!similar.length" class="hint">没有措辞接近的卡片。</p>
+      <p v-else-if="similar[0].weak" class="hint">这张卡片没写说明，推荐可能不准。</p>
+      <ul v-if="similar.length" class="list">
+        <li v-for="item in similar" :key="item.idea_id" class="card">
+          <div class="row">
+            <RouterLink :to="'/ideas/' + item.idea_id">{{ item.title }}</RouterLink>
+            <span class="score">{{ Math.round(item.score * 100) }}% 像</span>
+          </div>
+          <div class="bar">
+            <button type="button" class="plain" @click="markDuplicate(item)">标为重复</button>
           </div>
         </li>
       </ul>
@@ -217,5 +255,6 @@ h2 { font-size: 16px; margin: 24px 0 8px; }
 .quote { margin: 8px 0 0; color: #374151; background: #f9fafb; padding: 8px 10px; border-radius: 8px; }
 
 .warn { border-color: #fcd34d; background: #fffbeb; }
+.score { color: #6b7280; font-size: 13px; white-space: nowrap; }
 .edit { display: grid; gap: 10px; }
 </style>
