@@ -1,4 +1,7 @@
 from contextlib import contextmanager
+from io import BytesIO
+import json
+from urllib.error import HTTPError, URLError
 from uuid import UUID, uuid4
 
 import pytest
@@ -10,10 +13,14 @@ from app import demo
 from app.db import get_session
 from app.main import app
 from app.models import Decision
+from app.references import LiveReferences, get_reference_data
 
 
 PROJECT = "11111111-1111-4111-8111-111111111111"
 IDEA = "44444444-4444-4444-8444-444444444441"
+OTHER_PROJECT = "22222222-2222-4222-8222-222222222222"
+CONVERSATION = "33333333-3333-4333-8333-333333333333"
+MESSAGE = "55555555-5555-4555-8555-555555555555"
 
 
 @pytest.fixture
@@ -33,6 +40,126 @@ def client(monkeypatch):
         yield test_client
     app.dependency_overrides.clear()
     engine.dispose()
+
+
+@pytest.fixture
+def live_routes(client, monkeypatch):
+    idea = {"idea_id": IDEA, "project_id": PROJECT, "title": "服务中的想法", "summary": "服务中的摘要", "stage": "现在做"}
+    routes = {
+        "http://projects.test/api/projects": [{"project_id": PROJECT, "name": "服务项目"}],
+        f"http://projects.test/api/projects/{PROJECT}": {"project_id": PROJECT, "name": "服务项目"},
+        f"http://projects.test/api/projects/{OTHER_PROJECT}": {"project_id": OTHER_PROJECT, "name": "另一个项目"},
+        "http://ideas.test/api/ideas": [idea, {**idea, "idea_id": str(uuid4()), "project_id": OTHER_PROJECT},
+                                          {**idea, "idea_id": str(uuid4()), "project_id": "demo-project"}],
+        f"http://ideas.test/api/ideas/{IDEA}": idea,
+        f"http://ideas.test/api/ideas/{IDEA}/sources": [{"message_id": MESSAGE, "quote": "服务中的原文", "source_ref": json.dumps({
+            "projectId": PROJECT, "sessionId": CONVERSATION, "messageId": MESSAGE,
+        })}],
+        f"http://projects.test/api/conversations/{CONVERSATION}": {
+            "project_id": PROJECT, "conversation_id": CONVERSATION, "title": "服务中的会话",
+            "messages": [{"message_id": MESSAGE, "seq": 1, "role": "user", "content": "服务中的原文"}],
+        },
+    }
+
+    def fake_open(url, timeout):
+        assert timeout == 5
+        value = routes.get(url)
+        if url not in routes:
+            raise HTTPError(url, 404, "missing", {}, None)
+        if isinstance(value, Exception):
+            raise value
+        return BytesIO(value if isinstance(value, bytes) else json.dumps(value).encode())
+
+    monkeypatch.setattr("app.references.urlopen", fake_open)
+    app.dependency_overrides[get_reference_data] = lambda: LiveReferences("http://projects.test", "http://ideas.test")
+    try:
+        yield routes
+    finally:
+        app.dependency_overrides.pop(get_reference_data, None)
+
+
+def test_live_project_filter_and_idea_mapping(client, live_routes):
+    assert client.get("/api/health").json()["reference_data"] == "live"
+    assert client.get("/api/projects").json() == [{"project_id": PROJECT, "name": "服务项目"}]
+    ideas = client.get(f"/api/projects/{PROJECT}/ideas").json()
+    assert len(ideas) == 1 and ideas[0]["content"] == "服务中的摘要"
+    assert ideas[0]["idea_id"] == IDEA and ideas[0]["project_id"] == PROJECT
+
+
+def test_live_idea_requires_explicit_adoption_and_resolves_original_message(client, live_routes):
+    task_url = f"/api/projects/{PROJECT}/tasks"
+    assert client.post(task_url, json={"title": "关联实际想法", "idea_id": IDEA}).status_code == 422
+    assert client.put(f"/api/ideas/{IDEA}/decision", json={"status": "adopted"}).status_code == 200
+    assert client.post(task_url, json={"title": "关联实际想法", "idea_id": IDEA}).status_code == 201
+    sources = client.get(f"/api/ideas/{IDEA}/sources").json()
+    assert sources[0]["status"] == "available"
+    assert sources[0]["context"][0]["message_id"] == MESSAGE
+    assert sources[0]["context"][0]["content"] == "服务中的原文"
+
+
+@pytest.mark.parametrize("case, expected", [
+    ("no_ref", "unresolved"), ("partial_ref", "unresolved"), ("bad_json", "invalid"), ("foreign_ref", "invalid"),
+    ("foreign_conversation", "invalid"), ("deleted_conversation", "missing"), ("deleted_message", "missing"),
+])
+def test_live_sources_do_not_fabricate_or_leak_context(client, live_routes, case, expected):
+    source = live_routes[f"http://ideas.test/api/ideas/{IDEA}/sources"][0]
+    conversation_url = f"http://projects.test/api/conversations/{CONVERSATION}"
+    if case == "no_ref":
+        source["source_ref"] = None
+    elif case == "partial_ref":
+        source["source_ref"] = json.dumps({"projectId": PROJECT, "messageId": MESSAGE})
+    elif case == "bad_json":
+        source["source_ref"] = "{invalid"
+    elif case == "foreign_ref":
+        source["source_ref"] = json.dumps({"projectId": OTHER_PROJECT, "sessionId": CONVERSATION, "messageId": MESSAGE})
+    elif case == "foreign_conversation":
+        live_routes[conversation_url]["project_id"] = OTHER_PROJECT
+    elif case == "deleted_conversation":
+        del live_routes[conversation_url]
+    else:
+        live_routes[conversation_url]["messages"] = []
+    response = client.get(f"/api/ideas/{IDEA}/sources")
+    assert response.status_code == 200
+    source = response.json()[0]
+    assert source["status"] == expected and source["context"] == []
+    assert source["quote"] == "服务中的原文"
+
+
+def test_live_upstream_errors_do_not_fall_back_to_demo(client, live_routes):
+    live_routes["http://projects.test/api/projects"] = URLError("offline")
+    response = client.get("/api/projects")
+    assert response.status_code == 503 and "暂不可用" in response.json()["detail"]
+    live_routes["http://projects.test/api/projects"] = b"not json"
+    assert client.get("/api/projects").status_code == 502
+    assert client.get(f"/api/projects/{uuid4()}/ideas").status_code == 404
+    live_routes[f"http://ideas.test/api/ideas/{IDEA}"]["idea_id"] = str(uuid4())
+    assert client.get(f"/api/ideas/{IDEA}/decision").status_code == 502
+    assert client.get(f"/api/projects/{PROJECT}/tasks").json() == []
+
+
+def test_moved_idea_needs_adoption_in_its_new_project(client, live_routes):
+    decision_url = f"/api/ideas/{IDEA}/decision"
+    client.put(decision_url, json={"status": "adopted"})
+    old_task = client.post(f"/api/projects/{PROJECT}/tasks", json={"title": "原项目任务", "idea_id": IDEA}).json()
+    live_routes[f"http://ideas.test/api/ideas/{IDEA}"]["project_id"] = OTHER_PROJECT
+    assert client.get(decision_url).json() is None
+    new_task_url = f"/api/projects/{OTHER_PROJECT}/tasks"
+    assert client.post(new_task_url, json={"title": "新项目任务", "idea_id": IDEA}).status_code == 422
+    assert client.put(decision_url, json={"status": "adopted"}).status_code == 200
+    assert client.post(new_task_url, json={"title": "新项目任务", "idea_id": IDEA}).status_code == 201
+    assert client.get(f"/api/tasks/{old_task['task_id']}").json()["project_id"] == PROJECT
+    events = client.get(f"{decision_url}/events").json()
+    assert events[-1]["changes"]["project_id"] == {"from": PROJECT, "to": OTHER_PROJECT}
+
+
+def test_invalid_reference_mode_is_rejected(monkeypatch):
+    get_reference_data.cache_clear()
+    try:
+        monkeypatch.setenv("PROGRESSGATE_REFERENCE_MODE", "typo")
+        with pytest.raises(ValueError, match="demo 或 live"):
+            get_reference_data()
+    finally:
+        get_reference_data.cache_clear()
 
 
 def test_decision_to_task_and_blocked_recovery(client):

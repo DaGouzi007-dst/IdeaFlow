@@ -2,11 +2,12 @@
 
 这是 IdeaFlow 的独立开发版本，提供方案决策、任务进度和阻塞处理记录。它可使用模拟数据单独运行，用于和其他模块并行开发、展示和联调。
 
-当前是可独立运行的演示版本，已迭代决策历史和任务列表，不代表第四模块全部完成。真实项目和想法接入、来源联动、统一界面、权限、部署及集成验证仍属后续工作。
+当前可使用模拟数据独立运行，也可接入第一、第三模块的真实服务。本周已验证这三个模块的 HTTP 流程；第二模块检索、统一入口、权限、部署和全组完整验收仍属后续工作。
 
 ## 目前可以做什么
 
 - 查看模拟项目和想法，查看模拟来源消息及上下文。
+- 在联调模式读取第一模块的项目、会话和第三模块的想法、出处，并切换项目查看任务；消息按原编号返回。
 - 对想法记录待讨论、已采纳或暂不采纳，以及选择理由。
 - 回看决策状态和理由的修改记录；内容没有变化时不会增加记录。
 - 手动创建任务，或将已采纳的想法关联到新任务。
@@ -15,7 +16,7 @@
 - 查看任务状态及字段变更记录，从任务返回想法，也可以从想法查看关联任务。
 - 按全部四种任务状态筛选，组合任务标题、负责人搜索及截止日期筛选；查看逾期、今日到期提示，按截止日期从近到远排序。
 
-任务和决策使用 SQLite 保存在本机。当前项目、想法和来源消息来自仓库中的 `docs/样例/跨模块样例数据.json`，不是其他模块的正式数据。页面会明确显示演示数据标记。
+任务和决策使用 SQLite 保存在本机。默认 `demo` 模式的项目、想法和来源消息来自 `docs/样例/跨模块样例数据.json`，页面标记“演示数据”；配置 `live` 模式后读取已启动的第一、第三模块，标记“联调数据”。服务异常不会自动回退为演示输入。
 
 ## 环境
 
@@ -42,6 +43,32 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 后端接口说明：`http://127.0.0.1:8000/docs`。默认数据库位于 `progressgate/backend/progressgate.db`，已被 Git 忽略。
+
+## 以联调模式启动
+
+第一模块 `dev-part1`、第三模块 `dev-part3` 的源码仍在各自分支，不包含在本分支。使用独立工作副本分别运行，避免在同一个运行目录里反复切换分支。第一模块按其 README 在 `sessionhub/backend` 启动 `app.main:app`，端口 `8001`；第三模块在 `backend` 启动 `main:app`，指定端口 `8003`。各服务使用各自数据库，本模块仅通过接口读取项目、想法和来源，不直接修改它们的表。
+
+在已激活虚拟环境的第四模块后端目录，Linux/macOS 可执行：
+
+```bash
+PROGRESSGATE_REFERENCE_MODE=live \
+PROGRESSGATE_PROJECTS_URL=http://127.0.0.1:8001 \
+PROGRESSGATE_IDEAS_URL=http://127.0.0.1:8003 \
+PROGRESSGATE_DATABASE_URL=sqlite:///./progressgate-live.db \
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+PowerShell 使用 `$env:PROGRESSGATE_REFERENCE_MODE="live"` 等方式设置同名变量后，再启动后端。两个服务地址的默认值即上述 `8001`、`8003`，可按实际端口覆盖；环境变量在服务启动时读取，修改后需重启。`/api/health` 的 `reference_data` 可用于确认当前模式，它表示输入配置，不代表所有上游服务均健康。
+
+联调前需要先在第一模块创建项目，并在第三模块创建使用同一项目 UUID 的想法。第三模块默认的 `demo-project` 不是正式项目，第四模块不会将它自动映射到其他项目。出处的 `source_ref` 使用 JSON 字符串，至少包含第一模块返回的 `projectId`、`sessionId`（会话编号）、`messageId`；只有消息编号时页面提示坐标不完整。
+
+需要复现自动联调时，在仓库根目录执行：
+
+```bash
+python scripts/check_progressgate_live.py
+```
+
+该脚本会在指定服务中创建合成项目、会话、想法、出处、决策和任务，适合使用临时数据库的测试服务；可通过 `--projects-url`、`--ideas-url`、`--progressgate-url` 指定地址。它验证第一、三、四模块，不执行第二模块检索。详细结果见[第四周验证记录](../docs/testing/ProgressGate-第四周联调验证记录.md)。
 
 ## 启动前端
 
@@ -81,14 +108,17 @@ python -m pytest -q
 
 ## 与其他模块的接口
 
-- `GET /api/projects` 和 `GET /api/projects/{project_id}/ideas` 当前只返回模拟数据。
+- `GET /api/projects` 和 `GET /api/projects/{project_id}/ideas` 按当前模式读取模拟数据或真实服务。
+- `GET /api/ideas/{idea_id}/sources` 是当前页面使用的来源接口；联调模式下查询第三模块出处并从第一模块读回会话。
 - `GET /api/demo/ideas/{idea_id}/sources` 是模拟来源接口，只用于演示查看上下文。
 - `GET` / `PUT /api/ideas/{idea_id}/decision` 读取和保存当前决策。
 - `GET /api/ideas/{idea_id}/decision/events` 查询决策历史。
 - `GET` / `POST /api/projects/{project_id}/tasks` 查询和创建任务。
 - `GET` / `PATCH /api/tasks/{task_id}` 查看和更新任务；`GET /api/tasks/{task_id}/events` 查看变更记录。
 
-正式集成时，需要与项目和想法模块共同替换 `backend/app/demo.py` 中的模拟数据访问，并确认真实项目、想法、来源接口和数据关联。当前不包含会话导入、搜索、想法管理、账号或多用户权限，也不实现外部 Agent 的自动检测与恢复。
+`backend/app/references.py` 负责模式与读取适配，`demo.py` 保留模拟演示。`live` 模式的来源状态包含 `available`、`unresolved`（坐标不完整）、`invalid`（关联不一致）和 `missing`（会话或消息已不存在）；失效来源保留引用片段，不显示不相关上下文。当前只做整条消息定位，第二模块精确片段溯源和搜索尚未接入。
+
+外部想法移到其他项目后，原项目采纳结论不能直接用于新项目创建任务，需重新确认；任务不自动搬移。接口为单机开发联调用途，仍没有账号、多用户权限或正式部署方案。
 
 当前启动过程只会创建缺失的数据表，不会自动迁移已有数据库结构。本次新增决策历史表会在启动时创建；原有决策保持不变，升级前的修改无法还原，从升级后的首次实际修改开始记录。正式集成前仍需共同确定数据库迁移方案。
 
@@ -98,6 +128,9 @@ python -m pytest -q
 - [第一周个人进展](../docs/weekly/第1周-唐逸飞-决策与任务跟踪.md)：实际完成情况、AI 辅助使用和后续事项。
 - [第二周个人进展](../docs/weekly/第2周-唐逸飞-决策与任务跟踪.md)：决策历史、验证及待联调事项。
 - [第三周个人进展](../docs/weekly/第3周-唐逸飞-决策与任务跟踪.md)：任务筛选、截止日期提示及异步历史修复。
+- [第四周个人进展](../docs/weekly/第4周-唐逸飞-决策与任务跟踪.md)：真实服务接入及第一、三、四模块联调。
+- [第四周验证记录](../docs/testing/ProgressGate-第四周联调验证记录.md)：19 项后端测试、4 项前端测试及实际服务验证。
+- [小组后续安排建议](../docs/coordination/第四周-联调现状与后续安排建议.md)：个人职责、检索接入、统一入口和验收顺序。
 - [第三周接口对接清单](../docs/coordination/ProgressGate-第三周接口对接清单.md)：依据其他模块已提交代码核对的字段和接口差异，尚待共同确认。
 - [第三周验证记录](../docs/testing/ProgressGate-第三周验证记录.md)：4 项前端测试、7 项后端回归与浏览器基本验证。
 - [第一阶段验证记录](../docs/testing/ProgressGate-第一阶段验证记录.md)：5 项后端测试、前端构建和浏览器基本验证。

@@ -9,16 +9,19 @@ from sqlmodel import Session, select
 from . import demo
 from .db import create_tables, get_session
 from .models import Decision, DecisionEvent, DecisionInput, Task, TaskEvent, TaskInput, TaskUpdate, utc_now
+from .references import ReferenceData, get_reference_data
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    get_reference_data()
     create_tables()
     yield
 
 
 app = FastAPI(title="IdeaFlow ProgressGate", version="0.1.0", lifespan=lifespan)
 SessionDep = Annotated[Session, Depends(get_session)]
+ReferencesDep = Annotated[ReferenceData, Depends(get_reference_data)]
 
 
 def get_task_or_404(session: Session, task_id: str) -> Task:
@@ -29,18 +32,23 @@ def get_task_or_404(session: Session, task_id: str) -> Task:
 
 
 @app.get("/api/health")
-def health():
-    return {"status": "ok", "reference_data": "demo"}
+def health(references: ReferencesDep):
+    return {"status": "ok", "reference_data": references.mode}
 
 
 @app.get("/api/projects")
-def list_demo_projects():
-    return demo.projects()
+def list_projects(references: ReferencesDep):
+    return references.projects()
 
 
 @app.get("/api/projects/{project_id}/ideas")
-def list_demo_ideas(project_id: UUID):
-    return demo.ideas_for_project(str(project_id))
+def list_ideas(project_id: UUID, references: ReferencesDep):
+    return references.ideas_for_project(str(project_id))
+
+
+@app.get("/api/ideas/{idea_id}/sources")
+def list_idea_sources(idea_id: UUID, references: ReferencesDep):
+    return references.idea_sources(str(idea_id))
 
 
 @app.get("/api/demo/ideas/{idea_id}/sources")
@@ -49,15 +57,15 @@ def list_demo_idea_sources(idea_id: UUID):
 
 
 @app.get("/api/ideas/{idea_id}/decision")
-def get_decision(idea_id: UUID, session: SessionDep):
-    idea = demo.require_idea(str(idea_id))
+def get_decision(idea_id: UUID, session: SessionDep, references: ReferencesDep):
+    idea = references.require_idea(str(idea_id))
     decision = session.exec(select(Decision).where(Decision.idea_id == idea["idea_id"])).first()
-    return decision
+    return decision if decision and decision.project_id == idea["project_id"] else None
 
 
 @app.put("/api/ideas/{idea_id}/decision")
-def put_decision(idea_id: UUID, data: DecisionInput, session: SessionDep):
-    idea = demo.require_idea(str(idea_id))
+def put_decision(idea_id: UUID, data: DecisionInput, session: SessionDep, references: ReferencesDep):
+    idea = references.require_idea(str(idea_id))
     decision = session.exec(select(Decision).where(Decision.idea_id == idea["idea_id"])).first()
     reason = data.reason or None
     if decision is None:
@@ -66,12 +74,13 @@ def put_decision(idea_id: UUID, data: DecisionInput, session: SessionDep):
         event_type = "created"
     else:
         changes = {key: {"from": getattr(decision, key), "to": value}
-                   for key, value in {"status": data.status, "reason": reason}.items()
+                   for key, value in {"status": data.status, "reason": reason, "project_id": idea["project_id"]}.items()
                    if getattr(decision, key) != value}
         event_type = "updated"
     if not changes:
         return decision
     decision.status = data.status
+    decision.project_id = idea["project_id"]
     decision.reason = reason
     decision.updated_at = utc_now()
     session.add(decision)
@@ -83,8 +92,8 @@ def put_decision(idea_id: UUID, data: DecisionInput, session: SessionDep):
 
 
 @app.get("/api/ideas/{idea_id}/decision/events")
-def decision_events(idea_id: UUID, session: SessionDep):
-    idea = demo.require_idea(str(idea_id))
+def decision_events(idea_id: UUID, session: SessionDep, references: ReferencesDep):
+    idea = references.require_idea(str(idea_id))
     events = session.exec(select(DecisionEvent).where(DecisionEvent.idea_id == idea["idea_id"])
                           .order_by(DecisionEvent.created_at.asc(), DecisionEvent.event_id.asc())).all()
     return [{"event_id": event.event_id, "decision_id": event.decision_id, "idea_id": event.idea_id,
@@ -93,23 +102,23 @@ def decision_events(idea_id: UUID, session: SessionDep):
 
 
 @app.get("/api/projects/{project_id}/tasks")
-def list_tasks(project_id: UUID, session: SessionDep):
-    project = demo.require_project(str(project_id))
+def list_tasks(project_id: UUID, session: SessionDep, references: ReferencesDep):
+    project = references.require_project(str(project_id))
     return session.exec(
         select(Task).where(Task.project_id == project["project_id"]).order_by(Task.created_at.desc())
     ).all()
 
 
 @app.post("/api/projects/{project_id}/tasks", status_code=201)
-def create_task(project_id: UUID, data: TaskInput, session: SessionDep):
-    project = demo.require_project(str(project_id))
+def create_task(project_id: UUID, data: TaskInput, session: SessionDep, references: ReferencesDep):
+    project = references.require_project(str(project_id))
     idea_id = str(data.idea_id) if data.idea_id is not None else None
     if idea_id is not None:
-        idea = demo.require_idea(idea_id)
+        idea = references.require_idea(idea_id)
         if idea["project_id"] != project["project_id"]:
             raise HTTPException(status_code=422, detail="想法不属于当前项目")
         decision = session.exec(select(Decision).where(Decision.idea_id == idea_id)).first()
-        if decision is None or decision.status != "adopted":
+        if decision is None or decision.status != "adopted" or decision.project_id != project["project_id"]:
             raise HTTPException(status_code=422, detail="请先将该想法的决策设为采纳")
     task = Task(
         project_id=project["project_id"],
