@@ -11,9 +11,9 @@ class AggregateMapper:
     字段映射：
       conversation_id  → session_id
       title            → session_title
-      source           → tool
-      （数组顺序）      → seq
-      （自生成）        → id = f"{conversation_id}-m{seq}"
+      source           → tool（注意：第一模块的 source 是"导入渠道" manual/paste/json_file/synthetic，不是 AI 工具名）
+      （优先样例值）    → seq，缺失时按数组顺序
+      message_id       → id（真实 UUID）；仅缺失时兜底 f"{conversation_id}-m{seq}"
       （自算）          → content_hash = sha1(content)
     """
 
@@ -34,11 +34,11 @@ class AggregateMapper:
             for seq, raw in enumerate(msgs, start=1):
                 content = raw["content"]
                 out.append(MessageDTO(
-                    id=f"{conv_id}-m{seq}",
+                    id=raw.get("message_id") or f"{conv_id}-m{seq}",
                     session_id=conv_id,
                     session_title=conv.get("title", ""),
                     project_id=project_id,
-                    seq=seq,
+                    seq=raw.get("seq", seq),
                     role=raw["role"],
                     content=content,
                     created_at=raw.get("created_at") or "",

@@ -27,3 +27,5 @@ coverage/
 Thumbs.db
 
 backend/search.db
+*.db
+*.db-journal

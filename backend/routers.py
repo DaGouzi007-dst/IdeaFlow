@@ -5,7 +5,7 @@ from contracts import (
     SearchQuery, SearchResult, SourceRef,
     ResolvedSource, ContextWindow,
 )
-from container import get_search_service, get_trace_service, get_source
+from container import get_search_service, get_trace_service, get_source, get_db
 # routers.py 修改 /api/trace/resolve-batch
 
 from contracts import BatchResolveRequest   # ← 新增 import
@@ -17,6 +17,17 @@ router = APIRouter()
 @router.post("/api/search", response_model=SearchResult)
 def search(q: SearchQuery, svc=Depends(get_search_service)):
     return svc.search(q)
+
+
+@router.get("/api/tools")
+def list_tools():
+    """返回索引里出现过的来源工具及条数，供前端渲染筛选项。"""
+    rows = get_db().execute(
+        "SELECT tool, COUNT(*) AS c FROM search_doc "
+        "WHERE tool IS NOT NULL AND tool != '' "
+        "GROUP BY tool ORDER BY c DESC, tool"
+    ).fetchall()
+    return [{"tool": r[0], "count": r[1]} for r in rows]
 
 
 @router.get("/api/trace/resolve", response_model=ResolvedSource | None)

@@ -28,9 +28,7 @@
 <div class="bar">
   <input id="q" type="text" placeholder="输入关键词，回车搜索…" autofocus>
   <input id="project" type="text" placeholder="项目 ID（可空）" style="width:130px">
-  <label><input type="checkbox" class="tool" value="ChatGPT">ChatGPT</label>
-  <label><input type="checkbox" class="tool" value="Claude">Claude</label>
-  <label><input type="checkbox" class="tool" value="Cursor">Cursor</label>
+  <span id="tools" style="display:contents"></span>
   <button id="btn">搜索</button>
 </div>
 
@@ -40,6 +38,52 @@
 <script>
 const esc = s => String(s ?? '').replace(/[&<>"']/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// 已知平台配色：键名与插件 platform 字段一致（大小写敏感）
+const TOOL_COLORS = {
+  ChatGPT:  ['#eef4fd', '#2f6bdc'],
+  Gemini:   ['#e8f0fe', '#1a73e8'],
+  Claude:   ['#fdf0e8', '#c0652a'],
+  DeepSeek: ['#efe9ff', '#6a4fd8'],
+  Grok:     ['#f2f2f4', '#333333'],
+  Poe:      ['#f6eefb', '#8a3fb8'],
+  Doubao:   ['#eaf1ff', '#2f6bdc'],
+  Kimi:     ['#e9f7f1', '#1f8a5f'],
+  Qwen:     ['#fff2e8', '#d05c1a'],
+  Cursor:   ['#eef7ee', '#3d8b46'],
+};
+
+// 别名：插件或历史数据可能出现不同写法
+const TOOL_ALIAS = {
+  'gpt': 'ChatGPT', 'openai': 'ChatGPT', 'chat gpt': 'ChatGPT',
+  'google gemini': 'Gemini',
+  'claude ai': 'Claude', 'anthropic': 'Claude',
+  'deepseek chat': 'DeepSeek',
+  '豆包': 'Doubao', 'doubao (豆包)': 'Doubao',
+  '通义千问': 'Qwen', 'qwen chat': 'Qwen',
+  'moonshot': 'Kimi',
+};
+
+// 未知平台：按名称哈希出稳定色相，保证同平台同色、不同平台可区分
+function hashCode(str) {
+  let h = 0;
+  for (const ch of str) h = (h * 31 + ch.codePointAt(0)) | 0;
+  return Math.abs(h);
+}
+
+function toolColors(tool) {
+  const raw = String(tool || '');
+  const key = TOOL_ALIAS[raw.toLowerCase()] || raw;
+  if (TOOL_COLORS[key]) return TOOL_COLORS[key];
+  const hue = hashCode(raw) % 360;
+  return [`hsl(${hue}, 80%, 95%)`, `hsl(${hue}, 55%, 36%)`];
+}
+
+function badgeHtml(tool) {
+  const [bg, fg] = toolColors(tool);
+  return `<span class="badge" style="background:${bg};color:${fg}">${esc(tool)}</span>`;
+}
+
 
 // 后端 highlights 是 Unicode 码点偏移，JS slice 是 UTF-16，需按码点切
 function cpSlice(str, a, b) {
@@ -111,7 +155,7 @@ function render(data) {
               + `?msg=${encodeURIComponent(ref.messageId)}${hl}`;
     return `<div class="card" data-url="${esc(url)}">
       <div class="meta">
-        <span class="badge">${esc(h.tool)}</span>
+        ${badgeHtml(h.tool)}
         <span>${esc(h.sessionTitle)}</span>
         <span>${esc((h.createdAt || '').slice(0, 10))}</span>
         <span>${h.role === 'user' ? '用户' : 'AI'}</span>
@@ -129,6 +173,20 @@ document.getElementById('btn').addEventListener('click', doSearch);
 document.getElementById('q').addEventListener('keydown', e => {
   if (e.key === 'Enter') doSearch();
 });
+
+async function loadTools() {
+  const holder = document.getElementById('tools');
+  try {
+    const items = await (await fetch('/api/tools')).json();
+    holder.innerHTML = items.map(t =>
+      `<label><input type="checkbox" class="tool" value="${esc(t.tool)}">`
+      + `${esc(t.tool)} <small style="color:#aaa">${t.count}</small></label>`
+    ).join('');
+  } catch {
+    holder.innerHTML = '';   // 接口不可用时不阻塞搜索
+  }
+}
+loadTools();
 </script>
 </body>
 </html>

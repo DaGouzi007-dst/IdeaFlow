@@ -58,6 +58,15 @@ class LocalSource:
         ).fetchall()
         return [self._to_dto(r) for r in rows]
 
+    def list_conversations(self, project_id: str | None = None) -> list[dict]:
+        sql = "SELECT id, title, project_id, tool FROM sessions"
+        params: tuple = ()
+        if project_id:
+            sql += " WHERE project_id = ?"
+            params = (project_id,)
+        return [{"sessionId": r[0], "title": r[1], "projectId": r[2], "source": r[3]}
+                for r in self.conn.execute(sql, params)]
+
 
 def load_from_json(conn: sqlite3.Connection, path: str) -> list[MessageDTO]:
     """从 fixture JSON 转 MessageDTO 列表，供 Indexer.rebuild 使用。"""
