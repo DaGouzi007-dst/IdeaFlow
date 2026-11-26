@@ -15,7 +15,7 @@ const similar = ref([])
 const others = ref([])
 const error = ref('')
 const editing = ref(false)
-const form = reactive({ title: '', summary: '', tags: '', premise: '' })
+const form = reactive({ title: '', summary: '', tags: '', premise: '', project_id: '' })
 const target = ref('')
 const type = ref('冲突')
 
@@ -36,6 +36,7 @@ function startEdit() {
     summary: idea.value.summary || '',
     tags: (idea.value.tags || []).join(','),
     premise: idea.value.premise || '',
+    project_id: idea.value.project_id || '',
   })
   editing.value = true
 }
@@ -102,7 +103,7 @@ async function setRelation(rel, status) {
   }
 }
 
-// 系统只提示"措辞像"，标不标重复由人决定
+// 相似度仅作提示，是否标记重复由人工判断
 async function markDuplicate(item) {
   try {
     await api.relate({ from_idea_id: idea.value.idea_id, to_idea_id: item.idea_id, relation_type: '重复' })
@@ -113,7 +114,7 @@ async function markDuplicate(item) {
   }
 }
 
-// 有坐标就问第二模块要跳转地址，没有坐标就只显示原文
+// 有坐标时请求第二部分生成跳转地址，无坐标只显示原文
 async function backToQuote(source) {
   if (!source.ref) return
   try {
@@ -152,7 +153,7 @@ onMounted(async () => {
       <template v-if="!editing">
         <p>{{ idea.summary || '（还没有说明）' }}</p>
         <p class="premise">前提：{{ idea.premise || '未填' }}</p>
-        <p class="hint">项目：{{ idea.project_id }}</p>
+        <p class="hint">项目：{{ idea.project_id || '未归属项目' }}</p>
         <p v-if="idea.tags.length" class="tags">
           <span v-for="tag in idea.tags" :key="tag">{{ tag }}</span>
         </p>
@@ -170,6 +171,7 @@ onMounted(async () => {
         <input v-model="form.summary" placeholder="一句话说明" />
         <input v-model="form.tags" placeholder="标签，逗号分隔" />
         <input v-model="form.premise" placeholder="适用条件" />
+        <input v-model="form.project_id" placeholder="项目编号，留空＝不绑定项目" />
         <div class="bar">
           <button type="submit">保存更改</button>
           <button type="button" class="plain" @click="editing = false">取消</button>

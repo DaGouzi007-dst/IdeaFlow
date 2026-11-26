@@ -4,10 +4,11 @@ import { api } from '../api'
 
 const stages = ['现在做', '以后再说', '已放弃']
 const ideas = ref([])
+const pending = ref([])
 const keyword = ref('')
 const loading = ref(false)
 const error = ref('')
-const form = reactive({ project_id: 'demo-project', title: '', summary: '', tags: '', premise: '', stage: '现在做' })
+const form = reactive({ project_id: '', title: '', summary: '', tags: '', premise: '', stage: '现在做' })
 
 async function load() {
   loading.value = true
@@ -21,20 +22,34 @@ async function load() {
   }
 }
 
-// 输入停下来再查，不要每敲一个字就发一次请求
+// 输入停顿后再发起查询
 let timer = null
 function search() {
   clearTimeout(timer)
   timer = setTimeout(load, 300)
 }
 
+// 列表页只展示待确认的关系
+async function loadPending() {
+  try {
+    pending.value = await api.pending()
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function judge(rel, status) {
+  try {
+    await api.setRelation(rel.relation_id, status)
+    await loadPending()
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
 async function create() {
   if (!form.title.trim()) {
     error.value = '标题不能为空'
-    return
-  }
-  if (!form.project_id.trim()) {
-    error.value = '项目编号不能为空'
     return
   }
   try {
@@ -65,7 +80,10 @@ async function remove(idea) {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadPending()
+})
 </script>
 
 <template>
@@ -77,9 +95,28 @@ onMounted(load)
 
     <p v-if="error" class="error">{{ error }}</p>
 
+    <section v-if="pending.length" class="card pending">
+      <h2>有 {{ pending.length }} 条关系等你确认</h2>
+      <ul class="list">
+        <li v-for="rel in pending" :key="rel.relation_id">
+          <div class="row">
+            <span>
+              <RouterLink :to="'/ideas/' + rel.from_idea_id">{{ rel.from_title }}</RouterLink>
+              <em>{{ rel.relation_type }}</em>
+              <RouterLink :to="'/ideas/' + rel.to_idea_id">{{ rel.to_title }}</RouterLink>
+            </span>
+          </div>
+          <div class="judge">
+            <button type="button" @click="judge(rel, '已确认')">确认</button>
+            <button type="button" class="plain" @click="judge(rel, '已拒绝')">撤销</button>
+          </div>
+        </li>
+      </ul>
+    </section>
+
     <form class="card create" @submit.prevent="create">
       <div class="row two">
-        <input v-model="form.project_id" placeholder="项目编号" />
+        <input v-model="form.project_id" placeholder="项目编号，不填＝不绑定项目" />
         <select v-model="form.stage">
           <option v-for="stage in stages" :key="stage" :value="stage">{{ stage }}</option>
         </select>
@@ -153,4 +190,9 @@ onMounted(load)
 .sources { margin: 6px 0 0; color: #6b7280; font-size: 13px; }
 
 .idea-foot { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
+
+.pending { border-color: #fcd34d; background: #fffbeb; margin-bottom: 16px; }
+.pending h2 { font-size: 15px; margin: 0 0 10px; }
+.pending em { font-style: normal; font-size: 12px; color: #92400e; margin: 0 8px; }
+.judge { display: flex; gap: 8px; margin-top: 8px; }
 </style>

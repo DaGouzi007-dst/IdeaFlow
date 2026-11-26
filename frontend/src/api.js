@@ -6,7 +6,13 @@ const call = async (path, method = 'GET', body) => {
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
-    throw new Error(typeof data.detail === 'string' ? data.detail : `请求失败（${res.status}）`)
+    const detail = data.detail
+    const err = new Error(
+      typeof detail === 'string' ? detail : (detail && detail.message) || `请求失败（${res.status}）`,
+    )
+    err.status = res.status
+    err.data = detail
+    throw err
   }
   return res.status === 204 ? null : res.json()
 }
@@ -15,6 +21,7 @@ export const api = {
   list: (q) => call('/ideas' + (q ? '?q=' + encodeURIComponent(q) : '')),
   get: (id) => call('/ideas/' + id),
   create: (data) => call('/ideas', 'POST', data),
+  fromSource: (data) => call('/ideas/from-source', 'POST', data),
   update: (id, data) => call('/ideas/' + id, 'PATCH', data),
   remove: (id) => call('/ideas/' + id, 'DELETE'),
 
@@ -23,13 +30,14 @@ export const api = {
   addSource: (id, data) => call(`/ideas/${id}/sources`, 'POST', data),
   removeSource: (id, messageId) => call(`/ideas/${id}/sources/${messageId}`, 'DELETE'),
 
-  // 拿到坐标后去后端换一个能跳的地址，地址格式不归我们管
+  // 跳转地址由后端统一生成
   sourceLink: (ref) => {
     const q = new URLSearchParams({ ...ref }).toString()
     return call('/source-link?' + q)
   },
 
   relations: (id) => call(`/ideas/${id}/relations`),
+  pending: () => call('/relations?status=' + encodeURIComponent('待确认')),
   relate: (data) => call('/relations', 'POST', data),
   setRelation: (id, status) => call('/relations/' + id, 'PATCH', { status }),
 }

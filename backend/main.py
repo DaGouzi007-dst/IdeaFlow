@@ -4,6 +4,7 @@ import os
 import urllib.parse
 import urllib.request
 from collections import Counter
+from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,7 +24,14 @@ STATUSES = ("待确认", "已确认", "已拒绝")
 app = FastAPI(title="IdeaFlow 想法卡片")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_origins=[
+        "http://127.0.0.1:5171",
+        "http://localhost:5171",
+        "http://127.0.0.1:5172",
+        "http://localhost:5172",
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -35,7 +43,7 @@ class IdeaIn(BaseModel):
     premise: str = ""
     stage: str = "现在做"
     tags: list[str] = []
-    project_id: str = "demo-project"
+    project_id: str | None = None  # 为空表示不绑定项目
 
 # 修改 json
 class IdeaPatch(BaseModel):
@@ -45,10 +53,11 @@ class IdeaPatch(BaseModel):
     stage: str | None = None
     tags: list[str] | None = None
     favorite: bool | None = None
+    project_id: str | None = None
 
 # 加出处json
 class SourceRef(BaseModel):
-    """第二部分定义的坐标，字段名跟他们的契约一致（驼峰）。"""
+    """与第二部分接口一致的坐标结构。"""
 
     projectId: str
     sessionId: str
@@ -62,7 +71,19 @@ class SourceIn(BaseModel):
     message_id: str = Field(min_length=1)
     source_ref: str | None = None
     quote: str | None = None
-    ref: SourceRef | None = None  # 有坐标就传，老调用不传也照旧
+    ref: SourceRef | None = None  # 可选，兼容不传坐标的调用
+
+
+# 从搜索结果建卡，卡片与出处一次写入
+class FromSourceIn(BaseModel):
+    ref: SourceRef
+    quote: str = ""
+    project_id: str | None = None  # 缺省取坐标中的 projectId
+    title: str | None = None  # 缺省取原文前 40 字
+    summary: str | None = None
+    tags: list[str] = []
+    premise: str = ""
+    stage: str = "现在做"
 
 # 建立关系
 class RelationIn(BaseModel):
@@ -77,7 +98,7 @@ class RelationPatch(BaseModel):
 
 # 三个数据库工具函数
 def out(session: Session, idea: Idea) -> dict:
-    """把一行 idea 转成前端要的样子，出处单独查。"""
+    """转换为接口返回结构，出处单独查询。"""
     rows = session.exec(select(IdeaSource).where(IdeaSource.idea_id == idea.idea_id)).all()
     return {
         "idea_id": idea.idea_id,
@@ -95,7 +116,7 @@ def out(session: Session, idea: Idea) -> dict:
 
 
 def relation_out(session: Session, rel: IdeaRelation) -> dict:
-    """关系对前端来说要知道对方是谁。"""
+    """补上双方的标题。"""
     a = session.get(Idea, rel.from_idea_id)
     b = session.get(Idea, rel.to_idea_id)
     return {
@@ -119,7 +140,7 @@ def find(session: Session, idea_id: str) -> Idea:
 
 
 # ---------- 相似推荐 ----------
-# 中文不做分词，按字符二元组切；IDF 让"想法""卡片"这种到处都有的词自动变轻
+# 中文不分词，按字符二元组统计；IDF 降低常见字组的权重
 
 
 def grams(text: str) -> list[str]:
@@ -143,13 +164,13 @@ def vectorize(docs: list[str]) -> list[dict]:
 
 
 def idea_text(idea: Idea) -> str:
-    """标题写两遍，权重最高；说明、标签、前提一起参与。"""
+    """标题重复一次以加权，说明、标签、前提一并参与。"""
     tags = " ".join((idea.tags or "").split(","))
     return f"{idea.title} {idea.title} {idea.summary or ''} {tags} {idea.premise or ''}"
 
 
 def source_out(row: IdeaSource) -> dict:
-    """出处对外多带一个拆开的 ref；旧的 source_ref 照样原样返回。"""
+    """返回拆分后的 ref，同时保留原始 source_ref。"""
     ref = None
     if row.source_ref and row.source_ref.startswith("{"):
         try:
@@ -165,6 +186,28 @@ def source_out(row: IdeaSource) -> dict:
     }
 
 
+def is_uuid(value: str) -> bool:
+    """判断字符串是否为 UUID。"""
+    try:
+        UUID(str(value))
+        return True
+    except ValueError:
+        return False
+
+
+def same_span(row: "IdeaSource", char_start: int | None, quote: str) -> bool:
+    """判断是否为同一段出处：有坐标比对起始位置，否则比对原文。"""
+    if char_start is None:
+        return (row.quote or "").strip() == quote
+    if not row.source_ref or not row.source_ref.startswith("{"):
+        return False
+    try:
+        return json.loads(row.source_ref).get("charStart") == char_start
+    except ValueError:
+        return False
+
+
+# 接口
 @app.get("/api/ideas")
 def list_ideas(q: str | None = None):
     with Session(models.engine) as session:
@@ -183,10 +226,10 @@ def get_idea(idea_id: str):
     with Session(models.engine) as session:
         return out(session, find(session, idea_id))
 
-
+# 相似推荐
 @app.get("/api/ideas/{idea_id}/similar")
 def similar_ideas(idea_id: str, limit: int = 3):
-    """找措辞接近的卡片，只做提示，不自动建关系。"""
+    """返回措辞相近的卡片，仅作提示。"""
     if not 1 <= limit <= 10:
         raise HTTPException(422, "limit 取 1 到 10")
     with Session(models.engine) as session:
@@ -197,7 +240,7 @@ def similar_ideas(idea_id: str, limit: int = 3):
         vecs = vectorize([idea_text(idea)] + [idea_text(row) for row in others])
         pairs = [(sum(x * vecs[i + 1].get(w, 0) for w, x in vecs[0].items()), row) for i, row in enumerate(others)]
         pairs.sort(key=lambda p: p[0], reverse=True)
-        weak = not (idea.summary or "").strip()  # 没写说明时推荐会飘，告诉前端
+        weak = not (idea.summary or "").strip()  # 未填说明时结果不稳定，标记给前端
         return [
             {"idea_id": row.idea_id, "title": row.title, "score": round(score, 3), "weak": weak}
             for score, row in pairs
@@ -210,7 +253,8 @@ def create_idea(payload: IdeaIn):
     if payload.stage not in STAGES:
         raise HTTPException(422, "阶段只能是：现在做 / 以后再说 / 已放弃")
     idea = Idea(
-        project_id=payload.project_id,
+        # 纯知识性想法不绑项目，空串表示未归属
+        project_id=(payload.project_id or "").strip(),
         title=payload.title.strip(),
         summary=payload.summary,
         premise=payload.premise,
@@ -224,6 +268,53 @@ def create_idea(payload: IdeaIn):
         return out(session, idea)
 
 
+@app.post("/api/ideas/from-source", status_code=201)
+def create_from_source(payload: FromSourceIn):
+    """从搜索结果建卡，卡片与出处在同一事务内写入。"""
+    ref = payload.ref
+    quote = (payload.quote or "").strip()
+    if not quote:
+        raise HTTPException(422, "必须带原文片段")
+    if payload.stage not in STAGES:
+        raise HTTPException(422, "阶段只能是：现在做 / 以后再说 / 已放弃")
+    if not is_uuid(ref.projectId):
+        raise HTTPException(422, "projectId 不是 UUID：" + ref.projectId)
+    if not is_uuid(ref.sessionId):
+        raise HTTPException(422, "sessionId 不是 UUID：" + ref.sessionId)
+    if ref.charStart is not None and ref.charEnd is not None and ref.charEnd < ref.charStart:
+        raise HTTPException(422, "charEnd 不能小于 charStart")
+    project_id = (payload.project_id or ref.projectId).strip()
+    if project_id != ref.projectId:
+        raise HTTPException(422, "项目归属不一致：project_id 和坐标里的 projectId 不一样")
+    title = (payload.title or "").strip() or quote[:40]
+    with Session(models.engine) as session:
+        # 同一消息的同一段话只存一次，重复时返回已有卡片编号
+        for row in session.exec(select(IdeaSource).where(IdeaSource.message_id == ref.messageId)).all():
+            if same_span(row, ref.charStart, quote):
+                raise HTTPException(409, {"message": "这条出处已经存过", "existing_idea_id": row.idea_id})
+        idea = Idea(
+            project_id=project_id,
+            title=title[:200],
+            summary=payload.summary if payload.summary is not None else quote,
+            premise=payload.premise,
+            stage=payload.stage,
+            tags=",".join(payload.tags),
+        )
+        session.add(idea)
+        session.flush()
+        session.add(
+            IdeaSource(
+                idea_id=idea.idea_id,
+                message_id=ref.messageId,
+                source_ref=ref.model_dump_json(),
+                quote=quote,
+            )
+        )
+        session.commit()
+        session.refresh(idea)
+        return out(session, idea)
+
+
 @app.patch("/api/ideas/{idea_id}")
 def update_idea(idea_id: str, payload: IdeaPatch):
     changes = payload.model_dump(exclude_unset=True)
@@ -231,6 +322,8 @@ def update_idea(idea_id: str, payload: IdeaPatch):
         raise HTTPException(422, "阶段只能是：现在做 / 以后再说 / 已放弃")
     if "tags" in changes:
         changes["tags"] = ",".join(changes["tags"])
+    if "project_id" in changes:
+        changes["project_id"] = (changes["project_id"] or "").strip()
     with Session(models.engine) as session:
         idea = find(session, idea_id)
         for key, value in changes.items():
@@ -296,7 +389,7 @@ def add_source(idea_id: str, payload: SourceIn):
 @app.get("/api/source-link")
 def source_link(projectId: str, sessionId: str, messageId: str,
                 charStart: int | None = None, charEnd: int | None = None):
-    """跳转地址不自己拼，转去问第二部分要，省得以后他们改格式。"""
+    """跳转地址由第二部分生成，格式以对方接口为准。"""
     base = os.environ.get("PART2_BASE", "http://127.0.0.1:8002")
     params = {"projectId": projectId, "sessionId": sessionId, "messageId": messageId}
     if charStart is not None and charEnd is not None:
@@ -307,7 +400,7 @@ def source_link(projectId: str, sessionId: str, messageId: str,
         with urllib.request.urlopen(url, timeout=2) as resp:
             link = json.loads(resp.read().decode("utf-8"))["link"]
     except Exception:
-        raise HTTPException(503, "第二部分没启动，先起来再点（PART2_BASE 指向它的地址）")
+        raise HTTPException(503, "第二部分服务不可用：请确认 PART2_BASE 与 8002 端口")
     return {"link": link if link.startswith("http") else base.rstrip("/") + link}
 
 
@@ -323,6 +416,19 @@ def remove_source(idea_id: str, message_id: str):
 
 
 # ---------- 关系 ----------
+
+
+@app.get("/api/relations")
+def list_all_relations(status: str | None = None):
+    """不传 status 时返回全部。"""
+    if status and status not in STATUSES:
+        raise HTTPException(422, "状态只能是：待确认 / 已确认 / 已拒绝")
+    with Session(models.engine) as session:
+        stmt = select(IdeaRelation)
+        if status:
+            stmt = stmt.where(IdeaRelation.status == status)
+        rows = session.exec(stmt.order_by(IdeaRelation.updated_at.desc())).all()
+        return [relation_out(session, rel) for rel in rows]
 
 
 @app.get("/api/ideas/{idea_id}/relations")
@@ -343,7 +449,7 @@ def create_relation(payload: RelationIn):
         raise HTTPException(422, "关系类型只能是：重复 / 互补 / 冲突")
     if payload.from_idea_id == payload.to_idea_id:
         raise HTTPException(422, "不能和自己标关系")
-    small, big = sorted([payload.from_idea_id, payload.to_idea_id])  # 按编号小到大存，避免存两条
+    small, big = sorted([payload.from_idea_id, payload.to_idea_id])  # 统一按编号排序，避免重复记录
     with Session(models.engine) as session:
         find(session, small)
         find(session, big)
@@ -381,3 +487,10 @@ def update_relation(relation_id: str, payload: RelationPatch):
         session.commit()
         session.refresh(rel)
         return relation_out(session, rel)
+
+
+if __name__ == "__main__":
+    # 端口由环境变量 PORT 指定，默认 8000
+    import uvicorn
+
+    uvicorn.run("main:app", host="127.0.0.1", port=int(os.getenv("PORT", "8000")))
