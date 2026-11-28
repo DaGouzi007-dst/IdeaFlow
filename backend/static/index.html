@@ -17,6 +17,8 @@
   .card:hover{box-shadow:0 2px 8px rgba(0,0,0,.08);border-color:#4a90e2}
   .meta{display:flex;gap:10px;align-items:center;font-size:13px;color:#666;margin-bottom:6px}
   .badge{background:#eef4fd;color:#4a90e2;border-radius:4px;padding:1px 8px;font-size:12px}
+  .actions{display:flex;justify-content:flex-end;margin-top:6px}
+  .actions button{background:#fff;color:#4a90e2;border:1px solid #4a90e2;padding:4px 12px;font-size:13px}
   .snip{font-size:14px;color:#333}
   mark{background:#fff3a0;padding:0 2px}
   .empty{color:#999;text-align:center;padding:40px 0}
@@ -38,6 +40,9 @@
 <script>
 const esc = s => String(s ?? '').replace(/[&<>"']/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// 第三部分（想法卡片）前端地址；端口按组内约定 5172
+const PART3_BASE = 'http://127.0.0.1:5172';
 
 // 已知平台配色：键名与插件 platform 字段一致（大小写敏感）
 const TOOL_COLORS = {
@@ -153,6 +158,15 @@ function render(data) {
     const url = `/viewer/projects/${encodeURIComponent(ref.projectId)}`
               + `/sessions/${encodeURIComponent(ref.sessionId)}`
               + `?msg=${encodeURIComponent(ref.messageId)}${hl}`;
+    const ideaParams = new URLSearchParams({
+      projectId: ref.projectId, sessionId: ref.sessionId, messageId: ref.messageId,
+      snippet: h.snippet || '',
+    });
+    if (ref.charStart != null && ref.charEnd != null) {
+      ideaParams.set('charStart', ref.charStart);
+      ideaParams.set('charEnd', ref.charEnd);
+    }
+    const ideaUrl = `${PART3_BASE}/ideas/new?${ideaParams.toString()}`;
     return `<div class="card" data-url="${esc(url)}">
       <div class="meta">
         ${badgeHtml(h.tool)}
@@ -161,11 +175,20 @@ function render(data) {
         <span>${h.role === 'user' ? '用户' : 'AI'}</span>
       </div>
       <div class="snip">${renderSnippet(h.snippet, h.highlights)}</div>
+      <div class="actions">
+        <button class="toIdea" data-idea-url="${esc(ideaUrl)}">存为想法</button>
+      </div>
     </div>`;
   }).join('');
 
   list.querySelectorAll('.card').forEach(el => {
     el.addEventListener('click', () => window.open(el.dataset.url, '_blank'));
+  });
+  list.querySelectorAll('.toIdea').forEach(btn => {
+    btn.addEventListener('click', ev => {
+      ev.stopPropagation();
+      window.open(btn.dataset.ideaUrl, '_blank');
+    });
   });
 }
 

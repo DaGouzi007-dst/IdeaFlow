@@ -78,8 +78,8 @@
 
 ### 落地与接口
 
-- REST：`/api/search`、`/api/trace/resolve`、`/api/trace/resolve-batch`、`/api/trace/context`、`/api/trace/link`
-- 临时查看器：`/viewer/projects/{pid}/sessions/{sid}?msg=&hl=`，滚动到目标消息并按片段高亮
+- REST：`POST /api/search`、`GET /api/trace/resolve`、`POST /api/trace/resolve-batch`、`GET /api/trace/context`、`GET /api/trace/link`、`GET /api/tools`
+- 临时查看器：`GET /viewer/projects/{pid}/sessions/{sid}?msg=&hl=`（页面）与 `GET /api/viewer/session/{sid}`（数据），滚动到目标消息并按片段高亮
 - 样例数据初始化：从 fixture JSON 一键入库建索引
 
 ## 三、待实现功能
@@ -113,12 +113,17 @@ pip install -r requirements.txt
 # 从样例数据初始化索引
 python -m container
 
-# 启动服务
-uvicorn app:app --reload
+# 启动服务（端口按组内约定固定 8002）
+uvicorn app:app --reload --port 8002
 
 # 单元测试
 pytest tests -q
+
 ```
+
+**端口约定**：第一部分 5171/8001，**第二部分 8002**，第三部分 5172/8003，第四部分 5173/8000。
+本模块无独立前端，验证页由后端同源提供，因此只需后端端口。
+第三部分通过 `PART2_BASE`（默认 `http://127.0.0.1:8002`）调用 `/api/trace/link`。
 
 ## 五、目录结构
 
